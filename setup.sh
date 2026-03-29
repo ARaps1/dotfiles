@@ -14,7 +14,6 @@ show_help() {
     echo "                        --update  Force reinstallation even if already installed"
     echo "  tmux              - Install tmux and tmux plugin manager"
     echo "  zsh               - Install zsh customizations (aliases, env, etc.)"
-    echo "  git               - Configure Git with custom settings"
     echo "  all               - Run all setup commands"
     echo "  help              - Show this help message"
 }
@@ -205,29 +204,11 @@ fi'
     echo "zsh setup complete!"
 }
 
-# Function for Git configuration
-git_setup() {
-    echo "Setting up Git configuration..."
-
-    # In dev-in-docker, ~/.config/git/config persists (not ~/.gitconfig).
-    # On personal machines, stow will create ~/.config/git/config which git reads by default.
-    create_symlinks "git"
-
-    echo "Git setup complete!"
-    echo ""
-    echo "IMPORTANT: Edit ~/.config/git/config (or the file in this repo at git/.config/git/config)"
-    echo "and fill in your name and email. Do NOT put work-specific credentials in this public repo."
-    echo "Use includeIf to conditionally load work-specific config:"
-    echo '  [includeIf "gitdir:~/work/"]'
-    echo '      path = ~/.config/git/config-work'
-}
-
 # Run all setup commands
 all_setup() {
     nvim_setup
     tmux_setup
     zsh_setup
-    git_setup
 }
 
 # Main execution
@@ -240,9 +221,6 @@ case "$1" in
         ;;
     zsh)
         zsh_setup
-        ;;
-    git)
-        git_setup
         ;;
     all)
         all_setup
