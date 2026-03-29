@@ -1,17 +1,59 @@
--- TODO: Replace this with your actual Neovim configuration.
--- This is a minimal starter config. Copy your existing ~/.config/nvim/init.lua
--- (or init.vim) content here.
+--[[
+  Modular config layout (same general idea as https://github.com/bingcao/dotfiles/tree/main/.config/nvim )
 
--- Set leader key to space
-vim.g.mapleader = " "
-vim.g.maplocalleader = " "
+  lua/opts.lua          — options and vim.g (e.g. have_nerd_font)
+  lua/keymaps.lua       — keymaps that do not depend on plugins
+  lua/autocmds.lua      — autocommands
+  lua/plugins/init.lua  — merges lazy.nvim specs
+  lua/plugins/core.lua  — Telescope, theme, Treesitter, blink, conform, …
+  lua/plugins/lsp.lua   — LSP, Mason, diagnostics, `servers` table
 
--- General options
-vim.opt.number = true               -- Show line numbers
-vim.opt.ignorecase = true            -- Case insensitive search
-vim.opt.smartcase = true             -- Except when using capitals
-vim.opt.hlsearch = true              -- Highlight search results
-vim.opt.mouse = "a"                  -- Enable mouse
-vim.opt.swapfile = false             -- Disable swap files
-vim.opt.autoindent = true
-vim.opt.termguicolors = true         -- Enable 24-bit color
+  Kickstart intro text lives in doc/kickstart.txt.
+--]]
+
+-- Set <space> as the leader key (before plugins load). See `:help mapleader`
+vim.g.mapleader = ' '
+vim.g.maplocalleader = ' '
+
+require 'opts'
+require 'keymaps'
+require 'autocmds'
+
+-- [[ Install `lazy.nvim` plugin manager ]]
+--    See `:help lazy.nvim.txt` or https://github.com/folke/lazy.nvim for more info
+local lazypath = vim.fn.stdpath 'data' .. '/lazy/lazy.nvim'
+if not (vim.uv or vim.loop).fs_stat(lazypath) then
+  local lazyrepo = 'https://github.com/folke/lazy.nvim.git'
+  local out = vim.fn.system { 'git', 'clone', '--filter=blob:none', '--branch=stable', lazyrepo, lazypath }
+  if vim.v.shell_error ~= 0 then
+    error('Error cloning lazy.nvim:\n' .. out)
+  end
+end
+
+---@type vim.Option
+local rtp = vim.opt.rtp
+rtp:prepend(lazypath)
+
+-- [[ Configure and install plugins ]]  Run :Lazy to inspect; :Lazy update to upgrade
+require('lazy').setup(require 'plugins', {
+  ui = {
+    icons = vim.g.have_nerd_font and {} or {
+      cmd = '⌘',
+      config = '🛠',
+      event = '📅',
+      ft = '📂',
+      init = '⚙',
+      keys = '🗝',
+      plugin = '🔌',
+      runtime = '💻',
+      require = '🌙',
+      source = '📄',
+      start = '🚀',
+      task = '📌',
+      lazy = '💤 ',
+    },
+  },
+})
+
+-- The line beneath this is called `modeline`. See `:help modeline`
+-- vim: ts=2 sts=2 sw=2 et

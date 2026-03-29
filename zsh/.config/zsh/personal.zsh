@@ -3,7 +3,14 @@
 # and sourced from .zshrc on personal machines.
 
 # TODO: Add your personal aliases, functions, and env vars here.
-
+alias ezsh="vim ~/.config/zsh/personal.zsh"
+alias gco="git checkout"
+alias gcob="gco -b"
+alias gfd="git fetch origin dev"
+alias gfco="gfd && gco origin/dev"
+alias gfcob="gfd && gco origin/dev && gcob"
+alias gfm="gfd && git merge origin/dev"
+alias gfr="gfd && git rebase -i origin/dev"
 # Example aliases:
 # alias ll="ls -la"
 # alias gs="git status"

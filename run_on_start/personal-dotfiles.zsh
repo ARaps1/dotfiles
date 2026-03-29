@@ -8,7 +8,7 @@
 
 DOTFILES_DIR="$HOME/.config/dotfiles"
 # TODO: Replace with your GitHub username
-DOTFILES_REPO="https://github.com/YOUR_USERNAME/dotfiles.git"
+DOTFILES_REPO="https://github.com/ARaps1/dotfiles.git"
 
 # Clone if missing (hard reset), otherwise pull latest
 if [ ! -d "$DOTFILES_DIR" ]; then

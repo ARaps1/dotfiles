@@ -1,0 +1,2 @@
+WRN 2026-03-29T10:21:45.609 ?.72486    server_start:164: Failed to start server: operation not permitted: /var/folders/_m/ycpxw74d29zf43zgcm6sxr8c0000gq/T/nvim.allan.raposo/mJ3mvs/nvim.72486.0
+WRN 2026-03-29T10:22:08.528 ?.72548    server_start:164: Failed to start server: operation not permitted: /var/folders/_m/ycpxw74d29zf43zgcm6sxr8c0000gq/T/nvim.allan.raposo/ujv3iD/nvim.72548.0
