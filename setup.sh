@@ -53,7 +53,6 @@ create_symlinks() {
     echo "Symlinks created successfully for $package"
 }
 
-# Helper function to install Neovim AppImage (for Linux)
 install_nvim_appimage() {
     ARCH=$(uname -m)
     echo "Installing Neovim from AppImage for $ARCH architecture..."
@@ -66,9 +65,18 @@ install_nvim_appimage() {
 
     NVIM_PATH=/usr/local/bin/nvim
 
+    # Remove old installation
     sudo rm -f "$NVIM_PATH"
-    sudo wget "$NVIM_RELEASE" -O "$NVIM_PATH"
-    sudo chmod +x "$NVIM_PATH"
+    sudo rm -rf /opt/nvim
+
+    # Download and extract AppImage (FUSE not available in containers)
+    cd /tmp
+    wget "$NVIM_RELEASE" -O nvim.appimage
+    chmod +x nvim.appimage
+    ./nvim.appimage --appimage-extract
+    sudo mv squashfs-root /opt/nvim
+    sudo ln -sf /opt/nvim/usr/bin/nvim "$NVIM_PATH"
+    rm -f nvim.appimage
 
     # Set as default editor on Debian-based systems
     if command -v update-alternatives >/dev/null 2>&1; then
@@ -77,7 +85,7 @@ install_nvim_appimage() {
         sudo update-alternatives --set editor "$NVIM_PATH"
     fi
 
-    echo "Neovim installation completed via AppImage!"
+    echo "Neovim installation completed via AppImage extract!"
 }
 
 # Function for Neovim
