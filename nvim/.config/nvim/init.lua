@@ -15,6 +15,16 @@
 vim.g.mapleader = ' '
 vim.g.maplocalleader = ' '
 
+do
+  local v = vim.version()
+  if v.major == 0 and v.minor < 7 then
+    error(
+      ('This config needs Neovim 0.7+ (vim.keymap). Found %d.%d.%d.\n'):format(v.major, v.minor, v.patch)
+        .. 'Upgrade nvim (see dotfiles setup.sh), or run `which nvim` / `nvim --version` if an old system binary is first in PATH.'
+    )
+  end
+end
+
 require 'opts'
 require 'keymaps'
 require 'autocmds'

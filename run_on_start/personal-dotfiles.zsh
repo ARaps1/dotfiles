@@ -21,4 +21,3 @@ fi
 "$DOTFILES_DIR/setup.sh" nvim
 "$DOTFILES_DIR/setup.sh" tmux
 "$DOTFILES_DIR/setup.sh" zsh
-"$DOTFILES_DIR/setup.sh" git
