@@ -20,11 +20,17 @@ return {
       {
         'mason-org/mason-lspconfig.nvim',
         opts = {
+          -- Mason installs many LSPs; with default `automatic_enable = true`, every installed
+          -- package is `vim.lsp.enable()`'d. Exclude `ts_ls` so only vtsls + tsgo run for TS/JS.
+          automatic_enable = {
+            exclude = { 'ts_ls' },
+          },
           ensure_installed = {
             'oxlint',
             'ruff',
             'ty',
             'tsgo',
+            'vtsls',
             'graphql',
             'spectral',
             'yamlls',
@@ -54,6 +60,38 @@ return {
       { 'j-hui/fidget.nvim', opts = {} },
     },
     config = function()
+      -- TypeScript: vtsls for features; tsgo for diagnostics only (fast). Ignore vtsls diagnostics.
+      vim.lsp.handlers['textDocument/publishDiagnostics'] = function(err, result, ctx, config)
+        local client = ctx and vim.lsp.get_client_by_id(ctx.client_id)
+        if client and client.name == 'vtsls' then
+          return
+        end
+        return vim.lsp.diagnostic.on_publish_diagnostics(err, result, ctx, config)
+      end
+
+      local function tsgo_diagnostics_only(client)
+        local caps = client.server_capabilities
+        caps.hoverProvider = false
+        caps.completionProvider = false
+        caps.definitionProvider = false
+        caps.declarationProvider = false
+        caps.implementationProvider = false
+        caps.referencesProvider = false
+        caps.renameProvider = false
+        caps.codeActionProvider = false
+        caps.signatureHelpProvider = false
+        caps.documentHighlightProvider = false
+        caps.documentSymbolProvider = false
+        caps.workspaceSymbolProvider = false
+        caps.documentFormattingProvider = false
+        caps.documentRangeFormattingProvider = false
+        caps.semanticTokensProvider = nil
+        caps.typeDefinitionProvider = false
+        caps.callHierarchyProvider = false
+        caps.selectionRangeProvider = false
+        caps.inlayHintProvider = false
+      end
+
       -- Brief aside: **What is LSP?**
       --
       -- LSP is an initialism you've probably heard, but might not understand what it is.
@@ -157,11 +195,58 @@ return {
         -- pyright = {},
         -- rust_analyzer = {},
         --
-        -- Some languages (like typescript) have entire language plugins that can be useful:
-        --    https://github.com/pmizio/typescript-tools.nvim
-        --
-        -- But for many setups, the LSP (`ts_ls`) will work just fine
-        ts_ls = {},
+        -- TypeScript/JavaScript: `vtsls` (features) + `tsgo` (diagnostics only). Do not enable `ts_ls` with these.
+        vtsls = {
+          settings = {
+            typescript = {
+              inlayHints = {
+                parameterNames = { enabled = 'all' },
+                parameterTypes = { enabled = true },
+                variableTypes = { enabled = true },
+                propertyDeclarationTypes = { enabled = true },
+                functionLikeReturnTypes = { enabled = true },
+                enumMemberValues = { enabled = true },
+              },
+            },
+            javascript = {
+              inlayHints = {
+                parameterNames = { enabled = 'all' },
+                parameterTypes = { enabled = true },
+                variableTypes = { enabled = true },
+                propertyDeclarationTypes = { enabled = true },
+                functionLikeReturnTypes = { enabled = true },
+                enumMemberValues = { enabled = true },
+              },
+            },
+          },
+        },
+        tsgo = {
+          -- Match vtsls/oxlint (UTF-16); tsgo can negotiate UTF-8 otherwise and triggers :checkhealth warnings.
+          offset_encoding = 'utf-16',
+          capabilities = vim.tbl_deep_extend('force', vim.lsp.protocol.make_client_capabilities(), {
+            general = {
+              positionEncodings = { 'utf-16' },
+            },
+          }),
+          on_attach = function(client)
+            tsgo_diagnostics_only(client)
+          end,
+        },
+
+        -- Vim has no `yml` filetype (only `yaml`); drop it so :checkhealth stops warning.
+        spectral = {
+          filetypes = { 'yaml', 'json' },
+          settings = {
+            enable = true,
+            run = 'onType',
+            validateLanguages = { 'yaml', 'json' },
+          },
+        },
+
+        -- Subtypes like yaml.docker-compose need a filetype plugin; plain `yaml` avoids unknown-ft warnings.
+        yamlls = {
+          filetypes = { 'yaml' },
+        },
 
         stylua = {}, -- Used to format Lua code
 
