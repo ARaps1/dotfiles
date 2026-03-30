@@ -4,6 +4,9 @@ set -e
 # Get the directory where this script is located
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 
+# Minimum Neovim version required by plugins (telescope, lspconfig, treesitter)
+NVIM_MIN_VERSION="0.10.4"
+
 # Show help menu
 show_help() {
     echo "Usage: $0 COMMAND [OPTIONS]"
@@ -14,6 +17,8 @@ show_help() {
     echo "                        --update  Force reinstallation even if already installed"
     echo "  tmux              - Install tmux and tmux plugin manager"
     echo "  zsh               - Install zsh customizations (aliases, env, etc.)"
+    echo "  deps              - Install external dependencies (ripgrep, fd, tree-sitter, etc.)"
+    echo "  nerd-font         - Install Hack Nerd Font"
     echo "  all               - Run all setup commands"
     echo "  help              - Show this help message"
 }
@@ -21,6 +26,11 @@ show_help() {
 # Detect environment
 is_dev_in_docker() {
     [ -d "/home/aurelia" ] && [ -f "/home/aurelia/.zshrc" ]
+}
+
+# Compare semver: returns 0 if $1 >= $2
+version_gte() {
+    [ "$(printf '%s\n' "$2" "$1" | sort -V | head -1)" = "$2" ]
 }
 
 # Check and install stow if needed
@@ -48,9 +58,113 @@ create_symlinks() {
     # Ensure stow is installed
     ensure_stow
 
+    # Remove existing config to avoid stow conflicts (trust the repo version)
+    local target_dir=""
+    case "$package" in
+        nvim)
+            target_dir="$HOME/.config/nvim"
+            ;;
+        zsh)
+            target_dir="$HOME/.config/zsh"
+            ;;
+    esac
+
+    if [ -n "$target_dir" ] && [ -d "$target_dir" ] && [ ! -L "$target_dir" ]; then
+        echo "Removing existing $package config at $target_dir (trusting repo version)..."
+        rm -rf "$target_dir"
+    fi
+
     # Use stow to create symlinks, targeting $HOME
     stow -R -v -d "$SCRIPT_DIR" -t "$HOME" "$package"
     echo "Symlinks created successfully for $package"
+}
+
+# Install external dependencies required by kickstart.nvim
+ensure_deps() {
+    echo "Checking external dependencies..."
+
+    OS="$(uname -s)"
+    case "$OS" in
+        Darwin)
+            # Ensure Xcode CLI tools are installed (needed for C compiler / treesitter builds)
+            if ! xcode-select -p >/dev/null 2>&1; then
+                echo "Installing Xcode Command Line Tools..."
+                xcode-select --install
+                echo "Please re-run this script after Xcode CLI tools finish installing."
+                exit 0
+            fi
+
+            if command -v brew >/dev/null 2>&1; then
+                echo "Installing dependencies via Homebrew..."
+                brew install ripgrep fd
+            else
+                echo "Error: Homebrew is required to install dependencies on macOS."
+                exit 1
+            fi
+            ;;
+        Linux)
+            if command -v apt-get >/dev/null 2>&1; then
+                sudo apt-get update
+                sudo apt-get install -y ripgrep fd-find build-essential unzip
+            elif command -v dnf >/dev/null 2>&1; then
+                sudo dnf install -y ripgrep fd-find gcc make unzip
+            else
+                echo "Warning: Unsupported package manager. Install ripgrep, fd, and a C compiler manually."
+            fi
+            ;;
+    esac
+
+    # tree-sitter CLI (brew only has the library, not the CLI)
+    if ! command -v tree-sitter >/dev/null 2>&1; then
+        echo "Installing tree-sitter CLI..."
+        if command -v npm >/dev/null 2>&1; then
+            npm install -g tree-sitter-cli
+        elif command -v cargo >/dev/null 2>&1; then
+            cargo install tree-sitter-cli
+        else
+            echo "Warning: npm or cargo required to install tree-sitter CLI. Install it manually."
+        fi
+    else
+        echo "tree-sitter CLI is already installed"
+    fi
+
+    echo "Dependencies check complete!"
+}
+
+# Install a Nerd Font
+nerd_font_setup() {
+    echo "Setting up Nerd Font..."
+
+    OS="$(uname -s)"
+    case "$OS" in
+        Darwin)
+            if command -v brew >/dev/null 2>&1; then
+                brew install --cask font-hack-nerd-font
+            else
+                echo "Error: Homebrew is required to install Nerd Font on macOS."
+                exit 1
+            fi
+            ;;
+        Linux)
+            local font_dir="$HOME/.local/share/fonts"
+            if [ ! -f "$font_dir/HackNerdFont-Regular.ttf" ]; then
+                echo "Downloading Hack Nerd Font..."
+                mkdir -p "$font_dir"
+                cd /tmp
+                curl -fLO https://github.com/ryanoasis/nerd-fonts/releases/latest/download/Hack.zip
+                unzip -o Hack.zip -d "$font_dir"
+                rm -f Hack.zip
+                fc-cache -fv
+            else
+                echo "Hack Nerd Font is already installed"
+            fi
+            ;;
+    esac
+
+    echo ""
+    echo "Nerd Font setup complete!"
+    echo "  → Set your terminal font to 'Hack Nerd Font'"
+    echo "  → Set vim.g.have_nerd_font = true in your init.lua"
 }
 
 install_nvim_appimage() {
@@ -88,6 +202,32 @@ install_nvim_appimage() {
     echo "Neovim installation completed via AppImage extract!"
 }
 
+# Install or upgrade Neovim to meet minimum version
+install_or_upgrade_nvim() {
+    OS="$(uname -s)"
+    case "$OS" in
+        Darwin)
+            if command -v brew >/dev/null 2>&1; then
+                brew install neovim || brew upgrade neovim
+            else
+                echo "Error: Homebrew is required to install Neovim on macOS."
+                exit 1
+            fi
+            ;;
+        Linux)
+            if command -v dnf >/dev/null 2>&1; then
+                sudo dnf install -y neovim python3-neovim
+            else
+                install_nvim_appimage
+            fi
+            ;;
+        *)
+            echo "Error: Unsupported OS: $OS"
+            exit 1
+            ;;
+    esac
+}
+
 # Function for Neovim
 nvim_setup() {
     UPDATE_FLAG=false
@@ -97,33 +237,20 @@ nvim_setup() {
         echo "Update flag detected. Will reinstall Neovim."
     fi
 
-    # Check if nvim is already installed
+    # Install dependencies first
+    ensure_deps
+
     if command -v nvim >/dev/null 2>&1 && [ "$UPDATE_FLAG" = false ]; then
-        echo "Neovim is already installed. Use --update flag to force reinstallation."
-    else
-        OS="$(uname -s)"
-        case "$OS" in
-            Darwin)
-                # macOS
-                if command -v brew >/dev/null 2>&1; then
-                    brew install neovim || brew upgrade neovim
-                else
-                    echo "Error: Homebrew is required to install Neovim on macOS."
-                    exit 1
-                fi
-                ;;
-            Linux)
-                if command -v dnf >/dev/null 2>&1; then
-                    sudo dnf install -y neovim python3-neovim
-                else
-                    install_nvim_appimage
-                fi
-                ;;
-            *)
-                echo "Error: Unsupported OS: $OS"
-                exit 1
-                ;;
-        esac
+        # Check minimum version
+        NVIM_VERSION=$(nvim --version | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+        if version_gte "$NVIM_VERSION" "$NVIM_MIN_VERSION"; then
+            echo "Neovim $NVIM_VERSION is installed and meets minimum version ($NVIM_MIN_VERSION)."
+        else
+            echo "Neovim $NVIM_VERSION is too old (need >= $NVIM_MIN_VERSION). Upgrading..."
+            install_or_upgrade_nvim
+        fi
+    elif [ "$UPDATE_FLAG" = true ] || ! command -v nvim >/dev/null 2>&1; then
+        install_or_upgrade_nvim
     fi
 
     # Create symlinks
@@ -214,9 +341,11 @@ fi'
 
 # Run all setup commands
 all_setup() {
+    ensure_deps
     nvim_setup
     tmux_setup
     zsh_setup
+    nerd_font_setup
 }
 
 # Main execution
@@ -229,6 +358,12 @@ case "$1" in
         ;;
     zsh)
         zsh_setup
+        ;;
+    deps)
+        ensure_deps
+        ;;
+    nerd-font)
+        nerd_font_setup
         ;;
     all)
         all_setup
