@@ -36,7 +36,18 @@ return {
           'neovim/nvim-lspconfig',
         },
       },
-      'WhoIsSethDaniel/mason-tool-installer.nvim',
+      {
+        'WhoIsSethDaniel/mason-tool-installer.nvim',
+        opts = {
+          ensure_installed = {
+            'prettier',
+            'stylua',
+          },
+        },
+        dependencies = {
+          'williamboman/mason.nvim',
+        },
+      },
 
       -- Useful status updates for LSP.
       { 'j-hui/fidget.nvim', opts = {} },
