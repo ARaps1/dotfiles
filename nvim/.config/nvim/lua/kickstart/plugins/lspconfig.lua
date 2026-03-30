@@ -1,14 +1,10 @@
--- LSP Plugins
+-- LSP Plugins (Mason + mason-lspconfig + nvim-lspconfig)
 ---@module 'lazy'
 ---@type LazySpec
 return {
   {
-    -- Main LSP Configuration
     'neovim/nvim-lspconfig',
     dependencies = {
-      -- Automatically install LSPs and related tools to stdpath for Neovim
-      -- Mason must be loaded before its dependents so we need to set it up here.
-      -- NOTE: `opts = {}` is the same as calling `require('mason').setup({})`
       {
         'mason-org/mason.nvim',
         ---@module 'mason.settings'
@@ -16,30 +12,39 @@ return {
         ---@diagnostic disable-next-line: missing-fields
         opts = {},
       },
-      -- Maps LSP server names between nvim-lspconfig and Mason package names.
       {
         'mason-org/mason-lspconfig.nvim',
         opts = {
-          -- Mason installs many LSPs; with default `automatic_enable = true`, every installed
-          -- package is `vim.lsp.enable()`'d. Exclude `ts_ls` so only vtsls + tsgo run for TS/JS.
+          -- Servers with custom `vim.lsp.config` below are excluded so Mason does not call
+          -- `vim.lsp.enable` before our merged config is registered.
           automatic_enable = {
-            exclude = { 'ts_ls' },
+            exclude = {
+              'ts_ls',
+              'vtsls',
+              'eslint',
+              'pyright',
+              'graphql',
+              'ruff',
+              'lua_ls',
+              'spectral',
+              'yamlls',
+            },
           },
           ensure_installed = {
-            'oxlint',
-            'ruff',
-            'ty',
-            'tsgo',
-            'vtsls',
+            'eslint',
             'graphql',
-            'spectral',
-            'yamlls',
             'lua_ls',
+            'pyright',
+            'ruff',
+            'spectral',
+            'ts_ls',
+            'vtsls',
+            'yamlls',
             'zls',
           },
         },
         dependencies = {
-          { 'williamboman/mason.nvim', opts = {} },
+          { 'mason-org/mason.nvim', opts = {} },
           'neovim/nvim-lspconfig',
         },
       },
@@ -47,110 +52,71 @@ return {
         'WhoIsSethDaniel/mason-tool-installer.nvim',
         opts = {
           ensure_installed = {
+            'oxlint',
             'prettier',
             'stylua',
           },
         },
         dependencies = {
-          'williamboman/mason.nvim',
+          'mason-org/mason.nvim',
         },
       },
 
-      -- Useful status updates for LSP.
       { 'j-hui/fidget.nvim', opts = {} },
     },
     config = function()
-      -- TypeScript: vtsls for features; tsgo for diagnostics only (fast). Ignore vtsls diagnostics.
-      vim.lsp.handlers['textDocument/publishDiagnostics'] = function(err, result, ctx, config)
-        local client = ctx and vim.lsp.get_client_by_id(ctx.client_id)
-        if client and client.name == 'vtsls' then
+      local root = require 'kickstart.benchling_root'
+
+      --- Match `aurelia.code-workspace` tsserver memory (MB); also set via NODE_OPTIONS for `ts_ls`.
+      local TSSERVER_MAX_MEMORY_MB = 6144
+
+      --- Prefer repo TypeScript and ESLint from node_modules (Benchling / Yarn monorepo).
+      ---@param config table
+      ---@param root_dir string
+      local function prepend_node_modules_bin(config, root_dir)
+        if vim.fn.isdirectory(root_dir .. '/node_modules') ~= 1 then
           return
         end
-        return vim.lsp.diagnostic.on_publish_diagnostics(err, result, ctx, config)
+        config.cmd_env = vim.tbl_extend('force', config.cmd_env or {}, {
+          PATH = root_dir .. '/node_modules/.bin:' .. (vim.env.PATH or ''),
+        })
       end
 
-      local function tsgo_diagnostics_only(client)
-        local caps = client.server_capabilities
-        caps.hoverProvider = false
-        caps.completionProvider = false
-        caps.definitionProvider = false
-        caps.declarationProvider = false
-        caps.implementationProvider = false
-        caps.referencesProvider = false
-        caps.renameProvider = false
-        caps.codeActionProvider = false
-        caps.signatureHelpProvider = false
-        caps.documentHighlightProvider = false
-        caps.documentSymbolProvider = false
-        caps.workspaceSymbolProvider = false
-        caps.documentFormattingProvider = false
-        caps.documentRangeFormattingProvider = false
-        caps.semanticTokensProvider = nil
-        caps.typeDefinitionProvider = false
-        caps.callHierarchyProvider = false
-        caps.selectionRangeProvider = false
-        caps.inlayHintProvider = false
+      ---@param config table
+      local function ts_node_heap_cmd_env(config)
+        local node_opts = ('--max-old-space-size=%d'):format(TSSERVER_MAX_MEMORY_MB)
+        local existing = config.cmd_env and config.cmd_env.NODE_OPTIONS
+        if existing and existing:find('max%-old%-space%-size', 1) then
+          return
+        end
+        config.cmd_env = vim.tbl_extend('force', config.cmd_env or {}, {
+          NODE_OPTIONS = (existing and (existing .. ' ') or '') .. node_opts,
+        })
       end
 
-      -- Brief aside: **What is LSP?**
-      --
-      -- LSP is an initialism you've probably heard, but might not understand what it is.
-      --
-      -- LSP stands for Language Server Protocol. It's a protocol that helps editors
-      -- and language tooling communicate in a standardized fashion.
-      --
-      -- In general, you have a "server" which is some tool built to understand a particular
-      -- language (such as `gopls`, `lua_ls`, `rust_analyzer`, etc.). These Language Servers
-      -- (sometimes called LSP servers, but that's kind of like ATM Machine) are standalone
-      -- processes that communicate with some "client" - in this case, Neovim!
-      --
-      -- LSP provides Neovim with features like:
-      --  - Go to definition
-      --  - Find references
-      --  - Autocompletion
-      --  - Symbol Search
-      --  - and more!
-      --
-      -- Thus, Language Servers are external tools that must be installed separately from
-      -- Neovim. This is where `mason` and related plugins come into play.
-      --
-      -- If you're wondering about lsp vs treesitter, you can check out the wonderfully
-      -- and elegantly composed help section, `:help lsp-vs-treesitter`
+      local use_vtsls = vim.g.kickstart_use_vtsls == true or vim.g.kickstart_use_vtsls == 1
 
-      --  This function gets run when an LSP attaches to a particular buffer.
-      --    That is to say, every time a new file is opened that is associated with
-      --    an lsp (for example, opening `main.rs` is associated with `rust_analyzer`) this
-      --    function will be executed to configure the current buffer
+      local inlay_ts = {
+        parameterNames = { enabled = 'all' },
+        parameterTypes = { enabled = true },
+        variableTypes = { enabled = true },
+        propertyDeclarationTypes = { enabled = true },
+        functionLikeReturnTypes = { enabled = true },
+        enumMemberValues = { enabled = true },
+      }
+
       vim.api.nvim_create_autocmd('LspAttach', {
         group = vim.api.nvim_create_augroup('kickstart-lsp-attach', { clear = true }),
         callback = function(event)
-          -- NOTE: Remember that Lua is a real programming language, and as such it is possible
-          -- to define small helper and utility functions so you don't have to repeat yourself.
-          --
-          -- In this case, we create a function that lets us more easily define mappings specific
-          -- for LSP related items. It sets the mode, buffer and description for us each time.
           local map = function(keys, func, desc, mode)
             mode = mode or 'n'
             vim.keymap.set(mode, keys, func, { buffer = event.buf, desc = 'LSP: ' .. desc })
           end
 
-          -- Rename the variable under your cursor.
-          --  Most Language Servers support renaming across files, etc.
           map('grn', vim.lsp.buf.rename, '[R]e[n]ame')
-
-          -- Execute a code action, usually your cursor needs to be on top of an error
-          -- or a suggestion from your LSP for this to activate.
           map('gra', vim.lsp.buf.code_action, '[G]oto Code [A]ction', { 'n', 'x' })
-
-          -- WARN: This is not Goto Definition, this is Goto Declaration.
-          --  For example, in C this would take you to the header.
           map('grD', vim.lsp.buf.declaration, '[G]oto [D]eclaration')
 
-          -- The following two autocommands are used to highlight references of the
-          -- word under your cursor when your cursor rests there for a little while.
-          --    See `:help CursorHold` for information about when this is executed
-          --
-          -- When you move your cursor, the highlights will be cleared (the second autocommand).
           local client = vim.lsp.get_client_by_id(event.data.client_id)
           if client and client:supports_method('textDocument/documentHighlight', event.buf) then
             local highlight_augroup = vim.api.nvim_create_augroup('kickstart-lsp-highlight', { clear = false })
@@ -175,65 +141,189 @@ return {
             })
           end
 
-          -- The following code creates a keymap to toggle inlay hints in your
-          -- code, if the language server you are using supports them
-          --
-          -- This may be unwanted, since they displace some of your code
           if client and client:supports_method('textDocument/inlayHint', event.buf) then
             map('<leader>th', function() vim.lsp.inlay_hint.enable(not vim.lsp.inlay_hint.is_enabled { bufnr = event.buf }) end, '[T]oggle Inlay [H]ints')
           end
         end,
       })
 
-      -- Enable the following language servers
-      --  Feel free to add/remove any LSPs that you want here. They will automatically be installed.
-      --  See `:help lsp-config` for information about keys and how to configure
       ---@type table<string, vim.lsp.Config>
       local servers = {
-        -- clangd = {},
-        -- gopls = {},
-        -- pyright = {},
-        -- rust_analyzer = {},
-        --
-        -- TypeScript/JavaScript: `vtsls` (features) + `tsgo` (diagnostics only). Do not enable `ts_ls` with these.
-        vtsls = {
+        ts_ls = {
+          root_dir = root.ts_ls_root_dir,
+          before_init = function(_, config)
+            local root_dir = config.root_dir
+            if type(root_dir) ~= 'string' or root_dir == '' then
+              return
+            end
+            prepend_node_modules_bin(config, root_dir)
+            ts_node_heap_cmd_env(config)
+            local tsjs = root_dir .. '/node_modules/typescript/lib/tsserver.js'
+            if vim.fn.filereadable(tsjs) == 1 then
+              config.init_options = vim.tbl_deep_extend('force', config.init_options or {}, {
+                tsserver = { path = tsjs },
+              })
+            end
+          end,
           settings = {
             typescript = {
-              inlayHints = {
-                parameterNames = { enabled = 'all' },
-                parameterTypes = { enabled = true },
-                variableTypes = { enabled = true },
-                propertyDeclarationTypes = { enabled = true },
-                functionLikeReturnTypes = { enabled = true },
-                enumMemberValues = { enabled = true },
-              },
+              inlayHints = inlay_ts,
             },
             javascript = {
-              inlayHints = {
-                parameterNames = { enabled = 'all' },
-                parameterTypes = { enabled = true },
-                variableTypes = { enabled = true },
-                propertyDeclarationTypes = { enabled = true },
-                functionLikeReturnTypes = { enabled = true },
-                enumMemberValues = { enabled = true },
-              },
+              inlayHints = inlay_ts,
             },
           },
         },
-        tsgo = {
-          -- Match vtsls/oxlint (UTF-16); tsgo can negotiate UTF-8 otherwise and triggers :checkhealth warnings.
-          offset_encoding = 'utf-16',
-          capabilities = vim.tbl_deep_extend('force', vim.lsp.protocol.make_client_capabilities(), {
-            general = {
-              positionEncodings = { 'utf-16' },
+
+        -- VS Code–aligned TS stack (workspace TS, high tsserver memory). Not TSgo; see AURELIA_LSP.md.
+        vtsls = {
+          root_dir = root.ts_ls_root_dir,
+          before_init = function(_, config)
+            local root_dir = config.root_dir
+            if type(root_dir) ~= 'string' or root_dir == '' then
+              return
+            end
+            prepend_node_modules_bin(config, root_dir)
+            ts_node_heap_cmd_env(config)
+          end,
+          settings = {
+            vtsls = {
+              autoUseWorkspaceTsdk = true,
             },
-          }),
-          on_attach = function(client)
-            tsgo_diagnostics_only(client)
+            typescript = {
+              tsserver = {
+                maxTsServerMemory = TSSERVER_MAX_MEMORY_MB,
+              },
+              inlayHints = inlay_ts,
+            },
+            javascript = {
+              tsserver = {
+                maxTsServerMemory = TSSERVER_MAX_MEMORY_MB,
+              },
+              inlayHints = inlay_ts,
+            },
+          },
+        },
+
+        eslint = {
+          root_dir = root.eslint_root_dir,
+          settings = {
+            workingDirectory = { mode = 'location' },
+            experimental = {
+              useFlatConfig = true,
+            },
+          },
+          before_init = function(_, config)
+            local root_dir = config.root_dir
+            if type(root_dir) ~= 'string' or root_dir == '' then
+              return
+            end
+            config.settings = config.settings or {}
+            config.settings.workspaceFolder = {
+              uri = root_dir,
+              name = vim.fn.fnamemodify(root_dir, ':t'),
+            }
+            prepend_node_modules_bin(config, root_dir)
+            if not config.settings['eslint.execArgv'] then
+              config.settings['eslint.execArgv'] = {
+                '--max-old-space-size=' .. TSSERVER_MAX_MEMORY_MB,
+              }
+            end
+            local pnp_cjs = root_dir .. '/.pnp.cjs'
+            local pnp_js = root_dir .. '/.pnp.js'
+            if type(config.cmd) == 'table' and (vim.uv.fs_stat(pnp_cjs) or vim.uv.fs_stat(pnp_js)) then
+              config.cmd = vim.list_extend({ 'yarn', 'exec' }, config.cmd --[[@as table]])
+            end
+            local flat = {
+              '/eslint.config.js',
+              '/eslint.config.mjs',
+              '/eslint.config.cjs',
+              '/eslint.config.ts',
+              '/eslint.config.mts',
+              '/eslint.config.cts',
+            }
+            local has_flat = false
+            for _, suffix in ipairs(flat) do
+              if vim.fn.filereadable(root_dir .. suffix) == 1 then
+                has_flat = true
+                break
+              end
+            end
+            if has_flat then
+              config.settings.experimental = vim.tbl_deep_extend('force', config.settings.experimental or {}, {
+                useFlatConfig = true,
+              })
+            else
+              config.settings.experimental = vim.tbl_deep_extend('force', config.settings.experimental or {}, {
+                useFlatConfig = false,
+              })
+            end
+            local skip_aware = root_dir .. '/eslint.config.skip-type-aware-rules.js'
+            local want_full = vim.g.aurelia_eslint_full_type_aware == true or vim.g.aurelia_eslint_full_type_aware == 1
+            if not want_full and vim.fn.filereadable(skip_aware) == 1 then
+              config.settings['eslint.options'] = vim.tbl_deep_extend('force', config.settings['eslint.options'] or {}, {
+                overrideConfigFile = skip_aware,
+              })
+            end
           end,
         },
 
-        -- Vim has no `yml` filetype (only `yaml`); drop it so :checkhealth stops warning.
+        pyright = {
+          root_dir = root.ruff_root_dir,
+          before_init = function(_, config)
+            config.settings = config.settings or {}
+            config.settings.python = config.settings.python or {}
+            local rd = config.root_dir
+            local benchling_js = type(rd) == 'string' and rd ~= '' and vim.fn.filereadable(rd .. '/eslint.config.js') == 1
+              and vim.fn.filereadable(rd .. '/package.json') == 1
+            if benchling_js then
+              local extra = root.aurelia_default_pyright_extra_paths(rd)
+              if type(vim.g.aurelia_pyright_extra_paths) == 'table' then
+                vim.list_extend(extra, vim.g.aurelia_pyright_extra_paths)
+              end
+              config.settings.python.analysis = vim.tbl_deep_extend('force', config.settings.python.analysis or {}, {
+                typeCheckingMode = 'off',
+                autoSearchPaths = false,
+                useLibraryCodeForTypes = true,
+                diagnosticMode = 'openFilesOnly',
+                extraPaths = extra,
+              })
+            else
+              config.settings.python.analysis = vim.tbl_deep_extend('force', config.settings.python.analysis or {}, {
+                autoSearchPaths = true,
+                useLibraryCodeForTypes = true,
+                diagnosticMode = 'openFilesOnly',
+              })
+            end
+            local python_path
+            if vim.env.VIRTUAL_ENV and vim.fn.executable(vim.env.VIRTUAL_ENV .. '/bin/python') == 1 then
+              python_path = vim.env.VIRTUAL_ENV .. '/bin/python'
+            elseif vim.env.AURELIA_PYTHON and vim.fn.executable(vim.env.AURELIA_PYTHON) == 1 then
+              python_path = vim.env.AURELIA_PYTHON
+            elseif vim.env.AURELIA_PYTHON_VENV and vim.fn.executable(vim.env.AURELIA_PYTHON_VENV .. '/bin/python') == 1 then
+              python_path = vim.env.AURELIA_PYTHON_VENV .. '/bin/python'
+            end
+            if python_path then
+              config.settings.python = vim.tbl_deep_extend('force', config.settings.python or {}, {
+                pythonPath = python_path,
+              })
+            end
+          end,
+          settings = {
+            python = {
+              analysis = {},
+            },
+          },
+        },
+
+        ruff = {
+          root_dir = root.ruff_root_dir,
+        },
+
+        graphql = {
+          root_dir = root.graphql_root_dir,
+        },
+
         spectral = {
           filetypes = { 'yaml', 'json' },
           settings = {
@@ -243,14 +333,10 @@ return {
           },
         },
 
-        -- Subtypes like yaml.docker-compose need a filetype plugin; plain `yaml` avoids unknown-ft warnings.
         yamlls = {
           filetypes = { 'yaml' },
         },
 
-        stylua = {}, -- Used to format Lua code
-
-        -- Special Lua Config, as recommended by neovim help docs
         lua_ls = {
           on_init = function(client)
             if client.workspace_folders then
@@ -265,8 +351,6 @@ return {
               },
               workspace = {
                 checkThirdParty = false,
-                -- NOTE: this is a lot slower and will cause issues when working on your own configuration.
-                --  See https://github.com/neovim/nvim-lspconfig/issues/3189
                 library = vim.tbl_extend('force', vim.api.nvim_get_runtime_file('', true), {
                   '${3rd}/luv/library',
                   '${3rd}/busted/library',
@@ -280,23 +364,12 @@ return {
         },
       }
 
-      -- Ensure the servers and tools above are installed
-      --
-      -- To check the current status of installed tools and/or manually install
-      -- other tools, you can run
-      --    :Mason
-      --
-      -- You can press `g?` for help in this menu.
-      local ensure_installed = vim.tbl_keys(servers or {})
-      vim.list_extend(ensure_installed, {
-        -- You can add other tools here that you want Mason to install
-      })
-
-      require('mason-tool-installer').setup { ensure_installed = ensure_installed }
-
       for name, server in pairs(servers) do
-        vim.lsp.config(name, server)
-        vim.lsp.enable(name)
+        local skip_ts = (name == 'ts_ls' and use_vtsls) or (name == 'vtsls' and not use_vtsls)
+        if not skip_ts then
+          vim.lsp.config(name, server)
+          vim.lsp.enable(name)
+        end
       end
     end,
   },
