@@ -50,6 +50,25 @@ ensure_stow() {
     fi
 }
 
+# Ensure tree-sitter-cli is installed via npm (needed for nvim-treesitter main branch)
+ensure_tree_sitter_cli() {
+    # Remove broken mise shim if it exists
+    if [ -f "/mise/shims/tree-sitter" ]; then
+        rm -f /mise/shims/tree-sitter
+    fi
+    # Remove broken mise node_modules version if it exists
+    local mise_ts="/mise/installs/node/*/lib/node_modules/tree-sitter-cli"
+    rm -rf $mise_ts 2>/dev/null
+
+    # Install via npm if not already working
+    if ! tree-sitter --version >/dev/null 2>&1; then
+        echo "Installing tree-sitter-cli via npm..."
+        npm install -g tree-sitter-cli
+    else
+        echo "tree-sitter-cli is already installed"
+    fi
+}
+
 # Create symlinks using stow
 create_symlinks() {
     local package=$1
@@ -251,6 +270,11 @@ nvim_setup() {
         fi
     elif [ "$UPDATE_FLAG" = true ] || ! command -v nvim >/dev/null 2>&1; then
         install_or_upgrade_nvim
+    fi
+
+    # Ensure tree-sitter-cli is available (for nvim-treesitter main branch)
+    if [ "$(uname -s)" = "Linux" ]; then
+        ensure_tree_sitter_cli
     fi
 
     # Create symlinks
