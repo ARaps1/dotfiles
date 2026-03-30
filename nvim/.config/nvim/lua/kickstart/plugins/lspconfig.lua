@@ -17,7 +17,25 @@ return {
         opts = {},
       },
       -- Maps LSP server names between nvim-lspconfig and Mason package names.
-      'mason-org/mason-lspconfig.nvim',
+      {'mason-org/mason-lspconfig.nvim',
+        opts = {
+          ensure_installed = {
+            'oxlint',
+            'ruff',
+            'ty',
+            'tsgo',
+            'graphql',
+            'spectral',
+            'yamlls',
+            'lua_ls',
+            'zls',
+          },
+        },
+        dependencies = {
+          { 'williamboman/mason.nvim', opts = {} },
+          'neovim/nvim-lspconfig',
+        },
+      },
       'WhoIsSethDaniel/mason-tool-installer.nvim',
 
       -- Useful status updates for LSP.
@@ -163,6 +181,7 @@ return {
             Lua = {},
           },
         },
+        
       }
 
       -- Ensure the servers and tools above are installed
