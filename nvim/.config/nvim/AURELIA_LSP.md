@@ -36,13 +36,43 @@ When the Aurelia/Benchling root heuristic matches, Pyright uses `autoSearchPaths
 
 ## Mason packages (this config)
 
-Installed via `mason-lspconfig` / Mason UI: `ts_ls`, `vtsls`, `eslint`, `pyright`, `ruff`, `graphql`, `lua_ls`, `spectral`, `yamlls`, `zls`. Tools via `mason-tool-installer`: `stylua`, `prettier`, `oxlint`.
+Installed via `mason-lspconfig` / Mason UI: `ts_ls`, `vtsls`, `eslint`, `pyright`, `ruff`, `graphql`, `lua_ls`, `spectral`, `yamlls`, `zls`. Tools via `mason-tool-installer`: `stylua`, `prettier`, `oxlint`, `mypy`, `markdownlint`.
 
 Only one of `ts_ls` / `vtsls` is enabled (see `vim.g.kickstart_use_vtsls`).
 
 To use **basedpyright** instead of Pyright, install Mason `basedpyright`, add it to `ensure_installed`, put `basedpyright` in `automatic_enable.exclude` and remove `pyright` from that exclude list, and register `basedpyright` in the `servers` table like `pyright` (only one Python analyzer should attach).
 
 **Pinning:** use `:Mason` to pick versions; Lua stays path-agnostic.
+
+## Formatting (conform.nvim)
+
+Formatters run on save via `conform.nvim` (`lua/kickstart/plugins/conform.lua`):
+
+| Filetype | Formatter | Benchling CI checker |
+|----------|-----------|---------------------|
+| Python | ruff_fix → ruff_format | `RUFF_FORMAT` |
+| JS/TS/TSX/JSX | oxfmt (via `npx`, stdin mode) | `OXFMT` |
+| CSS/Less | oxfmt | `OXFMT` |
+| JSON/JSON5/YAML/GraphQL | prettier | — |
+| Lua | stylua | — |
+
+oxfmt reads `.oxfmtrc.json` from the repo root (singleQuote, 110 width, trailingComma es5). The custom formatter definition uses `npx oxfmt --stdin-filepath $FILENAME` with stdin piping.
+
+**Note:** oxlint is a **linter**, not a formatter — it is not in the conform config. ESLint LSP handles oxlint rules via `eslint-plugin-oxlint`.
+
+## Linting (nvim-lint)
+
+`nvim-lint` (`lua/kickstart/plugins/lint.lua`) runs linters on save that LSP servers don't cover:
+
+| Filetype | Linter | Why needed |
+|----------|--------|-----------|
+| Python | mypy | Pyright `typeCheckingMode = off` for Benchling; mypy is the actual type checker (reads `mypy.ini`) |
+| Markdown | markdownlint | Style checks |
+
+**Not in nvim-lint** (and why):
+- **ruff** — Ruff LSP already provides all ruff diagnostics in real-time
+- **oxlint** — ESLint LSP delegates oxlint rules via `eslint-plugin-oxlint`; running standalone would duplicate 350+ diagnostics
+- **eslint** — ESLint LSP covers this
 
 ## Implementation in this repo
 

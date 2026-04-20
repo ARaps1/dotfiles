@@ -52,6 +52,8 @@ return {
         'WhoIsSethDaniel/mason-tool-installer.nvim',
         opts = {
           ensure_installed = {
+            'markdownlint',
+            'mypy',
             'oxlint',
             'prettier',
             'stylua',
