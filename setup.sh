@@ -18,6 +18,7 @@ show_help() {
     echo "  tmux              - Install tmux and tmux plugin manager"
     echo "  zsh               - Install zsh customizations (aliases, env, etc.)"
     echo "  deps              - Install external dependencies (ripgrep, fd, tree-sitter, etc.)"
+    echo "  pi                - Install Pi agent harness and symlink config"
     echo "  nerd-font         - Install Hack Nerd Font"
     echo "  all               - Run all setup commands"
     echo "  help              - Show this help message"
@@ -91,6 +92,31 @@ create_symlinks() {
     if [ -n "$target_dir" ] && [ -d "$target_dir" ] && [ ! -L "$target_dir" ]; then
         echo "Removing existing $package config at $target_dir (trusting repo version)..."
         rm -rf "$target_dir"
+    fi
+
+    # Dry-run stow to detect conflicts before applying
+    local stow_output
+    stow_output=$(stow --no -v -d "$SCRIPT_DIR" -t "$HOME" "$package" 2>&1) || true
+
+    if echo "$stow_output" | grep -q "existing target is not owned by stow"; then
+        echo ""
+        echo "Stow detected conflicting files for '$package':"
+        echo "$stow_output" | grep "existing target is not owned by stow" | sed 's/.*existing target is not owned by stow: /  - /'
+        echo ""
+        printf "Remove these conflicting files so stow can manage them? [y/N] "
+        read -r response
+        if [ "$response" = "y" ] || [ "$response" = "Y" ]; then
+            echo "$stow_output" | grep "existing target is not owned by stow" | sed 's/.*existing target is not owned by stow: //' | while read -r conflict; do
+                local conflict_path="$HOME/$conflict"
+                if [ -e "$conflict_path" ] || [ -L "$conflict_path" ]; then
+                    echo "  Removing: $conflict_path"
+                    rm -rf "$conflict_path"
+                fi
+            done
+        else
+            echo "Skipping $package symlinks (conflicts unresolved)."
+            return 0
+        fi
     fi
 
     # Use stow to create symlinks, targeting $HOME
@@ -363,12 +389,42 @@ fi'
     echo "zsh setup complete!"
 }
 
+# Function for Pi agent harness
+pi_setup() {
+    echo "Setting up Pi agent harness..."
+
+    # Install Pi globally via npm if not present
+    if command -v pi >/dev/null 2>&1; then
+        echo "Pi is already installed"
+    else
+        if command -v npm >/dev/null 2>&1; then
+            echo "Installing Pi agent harness via npm..."
+            npm install -g @earendil-works/pi-coding-agent
+        else
+            echo "Error: npm is required to install Pi. Install Node.js/npm first."
+            exit 1
+        fi
+    fi
+
+    # Create the sessions directory (runtime directory, not stowed)
+    mkdir -p "$HOME/.pi/agent/sessions"
+
+    # Symlink settings.json and mcp.json via stow
+    create_symlinks "pi"
+
+    echo "Pi setup complete!"
+    echo "  → Config: ~/.pi/agent/settings.json"
+    echo "  → Skills: /src/.claude/skills, ~/.claude/skills"
+    echo "  → Alias: pi wraps with AWS_PROFILE=dev.ai-inference (via pi.zsh)"
+}
+
 # Run all setup commands
 all_setup() {
     ensure_deps
     nvim_setup
     tmux_setup
     zsh_setup
+    pi_setup
     nerd_font_setup
 }
 
@@ -385,6 +441,9 @@ case "$1" in
         ;;
     deps)
         ensure_deps
+        ;;
+    pi)
+        pi_setup
         ;;
     nerd-font)
         nerd_font_setup

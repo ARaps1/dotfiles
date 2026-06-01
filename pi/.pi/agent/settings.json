@@ -1,0 +1,6 @@
+{
+  "shellCommandPrefix": "export AWS_PROFILE=default",
+  "skills": ["/src/.claude/skills", "/home/aurelia/.claude/skills"],
+  "instructions": ["/src/CLAUDE.md", "/home/aurelia/.claude/CLAUDE.md"],
+  "packages": ["npm:pi-mcp-adapter"]
+}
