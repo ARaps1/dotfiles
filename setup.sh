@@ -19,6 +19,7 @@ show_help() {
     echo "  zsh               - Install zsh customizations (aliases, env, etc.)"
     echo "  deps              - Install external dependencies (ripgrep, fd, tree-sitter, etc.)"
     echo "  pi                - Install Pi agent harness and symlink config"
+    echo "  lazygit           - Install lazygit terminal UI for git"
     echo "  nerd-font         - Install Hack Nerd Font"
     echo "  all               - Run all setup commands"
     echo "  help              - Show this help message"
@@ -308,6 +309,59 @@ nvim_setup() {
     echo "Neovim setup complete!"
 }
 
+install_lazygit_binary() {
+    ARCH=$(uname -m)
+    echo "Installing lazygit binary for $ARCH architecture..."
+
+    if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+        LAZYGIT_ARCH=arm64
+    else
+        LAZYGIT_ARCH=x86_64
+    fi
+
+    # Release asset filenames embed the version, so resolve the latest tag first
+    LAZYGIT_VERSION=$(curl -s "https://api.github.com/repos/jesseduffield/lazygit/releases/latest" | grep -Po '"tag_name": "v\K[^"]*')
+
+    cd /tmp
+    curl -fLo lazygit.tar.gz "https://github.com/jesseduffield/lazygit/releases/latest/download/lazygit_${LAZYGIT_VERSION}_Linux_${LAZYGIT_ARCH}.tar.gz"
+    tar xf lazygit.tar.gz lazygit
+    sudo install lazygit -D -t /usr/local/bin/
+    rm -f lazygit lazygit.tar.gz
+
+    echo "lazygit installation completed!"
+}
+
+# Function for lazygit
+lazygit_setup() {
+    echo "Setting up lazygit..."
+
+    if command -v lazygit >/dev/null 2>&1; then
+        echo "lazygit is already installed"
+        return 0
+    fi
+
+    OS="$(uname -s)"
+    case "$OS" in
+        Darwin)
+            if command -v brew >/dev/null 2>&1; then
+                brew install lazygit
+            else
+                echo "Error: Homebrew is required to install lazygit on macOS."
+                exit 1
+            fi
+            ;;
+        Linux)
+            install_lazygit_binary
+            ;;
+        *)
+            echo "Error: Unsupported OS: $OS"
+            exit 1
+            ;;
+    esac
+
+    echo "lazygit setup complete!"
+}
+
 # Function for tmux
 tmux_setup() {
     echo "Setting up tmux..."
@@ -425,6 +479,7 @@ all_setup() {
     tmux_setup
     zsh_setup
     pi_setup
+    lazygit_setup
     nerd_font_setup
 }
 
@@ -444,6 +499,9 @@ case "$1" in
         ;;
     pi)
         pi_setup
+        ;;
+    lazygit)
+        lazygit_setup
         ;;
     nerd-font)
         nerd_font_setup
