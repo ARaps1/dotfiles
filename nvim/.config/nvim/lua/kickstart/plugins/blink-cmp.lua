@@ -58,6 +58,23 @@ return {
         -- See :h blink-cmp-config-keymap for defining your own keymap
         preset = 'default',
 
+        -- Accept a minuet AI ghost suggestion first; otherwise fall through to snippet jump.
+        ['<Tab>'] = {
+          function()
+            local ok, accepted = pcall(function()
+              local virtualtext = require 'minuet.virtualtext'
+              if virtualtext.action.is_visible() then
+                virtualtext.action.accept()
+                return true
+              end
+              return false
+            end)
+            return ok and accepted
+          end,
+          'snippet_forward',
+          'fallback',
+        },
+
         -- For more advanced Luasnip keymaps (e.g. selecting choice nodes, expansion) see:
         --    https://github.com/L3MON4D3/LuaSnip?tab=readme-ov-file#keymaps
       },

@@ -19,6 +19,7 @@ show_help() {
     echo "  zsh               - Install zsh customizations (aliases, env, etc.)"
     echo "  deps              - Install external dependencies (ripgrep, fd, tree-sitter, etc.)"
     echo "  pi                - Install Pi agent harness and symlink config"
+    echo "  minuet            - Install LiteLLM->Bedrock proxy for minuet AI autocomplete"
     echo "  lazygit           - Install lazygit terminal UI for git"
     echo "  nerd-font         - Install Hack Nerd Font"
     echo "  all               - Run all setup commands"
@@ -472,6 +473,51 @@ pi_setup() {
     echo "  → Alias: pi wraps with AWS_PROFILE=dev.ai-inference (via pi.zsh)"
 }
 
+# Ensure uv (Python tool manager) is available for installing the LiteLLM proxy
+ensure_uv() {
+    if command -v uv >/dev/null 2>&1; then
+        return 0
+    fi
+    echo "Installing uv..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
+}
+
+# Function for minuet AI autocomplete: a local OpenAI-compatible LiteLLM proxy fronting
+# AWS Bedrock. A single shared proxy serves every Neovim instance (all tabs/worktrees).
+minuet_setup() {
+    echo "Setting up minuet AI autocomplete (LiteLLM -> Bedrock)..."
+
+    ensure_uv
+
+    if uv tool list 2>/dev/null | grep -q '^litellm'; then
+        echo "LiteLLM is already installed"
+    else
+        echo "Installing LiteLLM proxy via uv..."
+        uv tool install 'litellm[proxy]'
+    fi
+
+    # Link the proxy autostart/helpers (bedrock-proxy.zsh lives in the zsh package)
+    create_symlinks "zsh"
+
+    # Pre-install Neovim plugins (minuet) so completion is ready on first launch
+    if command -v nvim >/dev/null 2>&1; then
+        echo "Pre-installing Neovim plugins (minuet)..."
+        if command -v timeout >/dev/null 2>&1; then
+            timeout 300 nvim --headless "+Lazy! sync" +qa >/dev/null 2>&1 || true
+        else
+            nvim --headless "+Lazy! sync" +qa >/dev/null 2>&1 || true
+        fi
+    else
+        echo "Neovim not found; run '$0 nvim' first to install the minuet plugin."
+    fi
+
+    echo "minuet setup complete!"
+    echo "  → Neovim starts the shared proxy on launch and stops it when the last nvim exits"
+    echo "  → Manual control: bedrock-proxy / bedrock-proxy-stop"
+    echo "  → Needs 'aws sso login' for completions; accept suggestions with <Tab>"
+}
+
 # Run all setup commands
 all_setup() {
     ensure_deps
@@ -479,6 +525,7 @@ all_setup() {
     tmux_setup
     zsh_setup
     pi_setup
+    minuet_setup
     lazygit_setup
     nerd_font_setup
 }
@@ -499,6 +546,9 @@ case "$1" in
         ;;
     pi)
         pi_setup
+        ;;
+    minuet)
+        minuet_setup
         ;;
     lazygit)
         lazygit_setup

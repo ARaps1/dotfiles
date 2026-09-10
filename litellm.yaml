@@ -1,0 +1,15 @@
+# LiteLLM proxy config: exposes an OpenAI-compatible endpoint backed by AWS Bedrock for
+# minuet-ai.nvim. Runs locally; the only parties are this machine and AWS Bedrock. Uses
+# the ambient AWS credential chain (SSO), region us-east-1.
+#
+# Run (bind to localhost so no other host can reach the proxy or your creds):
+#   litellm --config ~/dotfiles/litellm.yaml --host 127.0.0.1 --port 4000
+# Needs a live `aws sso login` (Bedrock invoke permission).
+model_list:
+  - model_name: bedrock-haiku
+    litellm_params:
+      model: bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0
+      aws_region_name: us-east-1
+litellm_settings:
+  # No anonymous usage telemetry; nothing leaves this machine except Bedrock calls.
+  telemetry: false
