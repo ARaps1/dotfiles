@@ -97,7 +97,8 @@ local function js_tests_for(rel, root)
   return found
 end
 
---- Copy the current file's repo-relative path to the unnamed and system-clipboard registers.
+--- Copy the current file's repo-relative path to the unnamed and system-clipboard
+--- registers, and to the host clipboard over OSC 52.
 function M.copy_rel_path()
   local rel = current_rel_path()
   if not rel then
@@ -106,6 +107,7 @@ function M.copy_rel_path()
   end
   vim.fn.setreg('"', rel)
   vim.fn.setreg('+', rel)
+  require('host_clipboard').copy(rel)
   vim.notify('Copied: ' .. rel, vim.log.levels.INFO)
 end
 

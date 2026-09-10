@@ -58,7 +58,7 @@ return {
         -- See :h blink-cmp-config-keymap for defining your own keymap
         preset = 'default',
 
-        -- Accept a minuet AI ghost suggestion first; otherwise fall through to snippet jump.
+        -- Accept a minuet AI ghost suggestion; otherwise fall through to snippet jump.
         ['<Tab>'] = {
           function()
             local ok, accepted = pcall(function()
@@ -72,6 +72,16 @@ return {
             return ok and accepted
           end,
           'snippet_forward',
+          'fallback',
+        },
+
+        -- Accept the highlighted completion menu item; otherwise move the cursor right.
+        ['<Right>'] = {
+          function(cmp)
+            if cmp.is_menu_visible() then
+              return cmp.select_and_accept()
+            end
+          end,
           'fallback',
         },
 

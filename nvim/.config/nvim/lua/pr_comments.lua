@@ -30,8 +30,8 @@ M._collapse_all = false
 -- Per-branch cache keyed by "repo_root\0branch". A value is an entry table
 -- { number = pr_number, files = { [path] = { [anchor_line] = thread[] } } } where a
 -- `thread` is { id, resolved, outdated, anchor, start, diff_hunk, comments }, and a
--- comment is { login, name, body, created_at }; or `false` when the branch has no pull
--- request. Keying by branch ties the overlay to the checked-out branch.
+-- comment is { login, name, body, created_at, url }; or `false` when the branch has no
+-- pull request. Keying by branch ties the overlay to the checked-out branch.
 local cache = {}
 
 -- In-flight loads keyed like `cache`, holding the callbacks awaiting one fetch so that
@@ -50,7 +50,7 @@ query($owner:String!,$name:String!,$number:Int!){
         nodes{
           id isResolved isOutdated path line startLine originalLine originalStartLine
           comments(first:100){
-            nodes{ body createdAt diffHunk author{ login ... on User { name } } }
+            nodes{ body createdAt diffHunk url author{ login ... on User { name } } }
           }
         }
       }
@@ -141,6 +141,7 @@ local function build_entry(number, nodes)
           name = comment.author and comment.author.name or nil,
           body = comment.body or '',
           created_at = comment.createdAt or '',
+          url = comment.url or '',
         })
       end
       files[node.path] = files[node.path] or {}
@@ -863,7 +864,8 @@ function M.float()
 end
 
 --- Copy the body text of the thread on the line under the cursor to the unnamed and
---- system-clipboard registers. Multiple comments are joined with a blank line.
+--- system-clipboard registers, and to the host clipboard over OSC 52. Multiple comments
+--- are joined with a blank line.
 function M.yank()
   with_thread_at_cursor(function(_, _, thread)
     local bodies = {}
@@ -873,7 +875,87 @@ function M.yank()
     local text = table.concat(bodies, '\n\n')
     vim.fn.setreg('"', text)
     vim.fn.setreg('+', text)
+    require('host_clipboard').copy(text)
     vim.notify('PR comment yanked', vim.log.levels.INFO)
+  end)
+end
+
+--- Build the text sent to Claude for a thread: a header with the file and line, the
+--- comment's GitHub URL, then each comment's author and body.
+--- @param relpath string
+--- @param thread table
+--- @param anchor integer
+--- @return string
+local function claude_payload(relpath, thread, anchor)
+  local lines = { ('PR comment on %s:%d'):format(relpath, anchor) }
+  local url = thread.comments[1] and thread.comments[1].url or ''
+  if url ~= '' then
+    table.insert(lines, url)
+  end
+  for _, comment in ipairs(thread.comments) do
+    table.insert(lines, '')
+    table.insert(lines, author_label(comment) .. ':')
+    table.insert(lines, comment.body)
+  end
+  return table.concat(lines, '\n')
+end
+
+--- An open terminal running `claude`, identified by its buffer name, as
+--- { buf, job, win } where `win` is a window showing it or nil. Nil when none is open.
+--- @return { buf: integer, job: integer, win: integer|nil }|nil
+local function find_claude_terminal()
+  for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(bufnr) and vim.bo[bufnr].buftype == 'terminal' then
+      local job = vim.b[bufnr].terminal_job_id
+      -- Terminal names are `term://{cwd}//{pid}:{cmd}`; match only the command so a shell
+      -- opened under a path containing "claude" does not count.
+      local command = vim.api.nvim_buf_get_name(bufnr):match ':([^:]*)$' or ''
+      if job and command:lower():find('claude', 1, true) then
+        local win = vim.fn.bufwinid(bufnr)
+        return { buf = bufnr, job = job, win = win ~= -1 and win or nil }
+      end
+    end
+  end
+  return nil
+end
+
+--- Inject `text` into a terminal job as a bracketed paste, so multi-line input lands in
+--- the program's prompt without being submitted.
+--- @param job integer
+--- @param text string
+local function paste_to_job(job, text)
+  pcall(vim.fn.chansend, job, '\27[200~' .. text .. '\27[201~')
+end
+
+--- Send the thread on the line under the cursor to a Claude terminal pane. An open
+--- `claude` pane receives the comment as an unsubmitted bracketed paste; otherwise a new
+--- `claude` pane opens in a vertical split and the text is injected once it has started.
+function M.send_to_claude()
+  with_thread_at_cursor(function(bufnr, _, thread, anchor)
+    local repo_root = repo_root_of(bufnr)
+    local relpath = (repo_root and repo_relpath(bufnr, repo_root)) or vim.api.nvim_buf_get_name(bufnr)
+    local text = claude_payload(relpath, thread, anchor)
+    local existing = find_claude_terminal()
+    if existing then
+      paste_to_job(existing.job, text)
+      if existing.win then
+        vim.api.nvim_set_current_win(existing.win)
+      else
+        vim.cmd('vsplit | buffer ' .. existing.buf)
+      end
+      vim.cmd 'startinsert'
+      vim.notify('PR comment sent to Claude', vim.log.levels.INFO)
+      return
+    end
+    vim.cmd 'vsplit | terminal claude'
+    local job = vim.b.terminal_job_id
+    vim.defer_fn(function()
+      if job then
+        paste_to_job(job, text)
+      end
+    end, 1200)
+    vim.cmd 'startinsert'
+    vim.notify('PR comment sent to a new Claude pane', vim.log.levels.INFO)
   end)
 end
 
@@ -1035,14 +1117,16 @@ end
 
 --- List every review thread in the pull request in a Telescope picker. The preview shows
 --- the original diff hunk (stable against file drift); selecting opens the working file at
---- the comment's best-guess current line.
+--- the comment's best-guess current line. Works from any buffer: when the current buffer
+--- has no file, the repository is resolved from the working directory.
 function M.list()
   if not pcall(require, 'telescope') then
     vim.notify('PR comments: telescope.nvim is required for the picker', vim.log.levels.ERROR)
     return
   end
-  local repo_root = repo_root_of(vim.api.nvim_get_current_buf())
+  local repo_root = repo_root_of(vim.api.nvim_get_current_buf()) or vim.fs.root(vim.fn.getcwd(), { '.git' })
   if not repo_root then
+    vim.notify('PR comments: not inside a git repository', vim.log.levels.WARN)
     return
   end
   load(repo_root, function(entry)
@@ -1148,6 +1232,7 @@ function M.setup(opts)
     list = M.list,
     float = M.float,
     yank = M.yank,
+    claude = M.send_to_claude,
     reply = M.reply,
     resolve = M.resolve,
     refresh = M.refresh,
@@ -1226,6 +1311,7 @@ function M.setup(opts)
   vim.keymap.set('n', '<leader>cp', M.prev, { desc = 'PR comments: [P]revious comment in file' })
   vim.keymap.set('n', '<leader>cf', M.float, { desc = 'PR comments: [F]loat thread on line' })
   vim.keymap.set('n', '<leader>cy', M.yank, { desc = 'PR comments: [Y]ank comment text' })
+  vim.keymap.set('n', '<leader>ca', M.send_to_claude, { desc = 'PR comments: send comment to Cl[a]ude' })
   vim.keymap.set('n', '<leader>cR', M.reply, { desc = 'PR comments: [R]eply to thread' })
   vim.keymap.set('n', '<leader>cx', M.resolve, { desc = 'PR comments: resolve/unresolve thread' })
   vim.keymap.set('n', '<leader>cr', M.refresh, { desc = 'PR comments: [R]efresh from GitHub' })

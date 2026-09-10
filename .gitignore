@@ -1,0 +1,3 @@
+# Python bytecode cache from litellm_usage_logger.py (regenerated when the proxy runs)
+__pycache__/
+*.pyc

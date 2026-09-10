@@ -21,6 +21,7 @@ show_help() {
     echo "  pi                - Install Pi agent harness and symlink config"
     echo "  minuet            - Install LiteLLM->Bedrock proxy for minuet AI autocomplete"
     echo "  lazygit           - Install lazygit terminal UI for git"
+    echo "  ghostty           - Symlink Ghostty terminal config (run on macOS host)"
     echo "  nerd-font         - Install Hack Nerd Font"
     echo "  all               - Run all setup commands"
     echo "  help              - Show this help message"
@@ -363,6 +364,14 @@ lazygit_setup() {
     echo "lazygit setup complete!"
 }
 
+# Symlink the Ghostty terminal config. Ghostty is a macOS host application, so run this
+# on the Mac (not inside a dev container, where it has no effect).
+ghostty_setup() {
+    echo "Setting up Ghostty config..."
+    create_symlinks "ghostty"
+    echo "Ghostty config symlinked. Reload Ghostty (Cmd+Shift+,) or restart it to apply."
+}
+
 # Function for tmux
 tmux_setup() {
     echo "Setting up tmux..."
@@ -527,6 +536,7 @@ all_setup() {
     pi_setup
     minuet_setup
     lazygit_setup
+    ghostty_setup
     nerd_font_setup
 }
 
@@ -552,6 +562,9 @@ case "$1" in
         ;;
     lazygit)
         lazygit_setup
+        ;;
+    ghostty)
+        ghostty_setup
         ;;
     nerd-font)
         nerd_font_setup

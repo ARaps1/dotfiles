@@ -12,7 +12,7 @@ bedrock-proxy() {
         return 0
     fi
     mkdir -p "$HOME/.local/state"
-    AWS_PROFILE=dev.ai-inference nohup litellm \
+    PYTHONPATH="$HOME/dotfiles${PYTHONPATH:+:$PYTHONPATH}" AWS_PROFILE=dev.ai-inference nohup litellm \
         --config "$HOME/dotfiles/litellm.yaml" --host 127.0.0.1 --port 4000 \
         >"$HOME/.local/state/bedrock-proxy.log" 2>&1 &
     disown

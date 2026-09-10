@@ -23,13 +23,9 @@ vim.diagnostic.config {
 
 vim.keymap.set('n', '<leader>q', vim.diagnostic.setloclist, { desc = 'Open diagnostic [Q]uickfix list' })
 
--- Exit terminal mode in the builtin terminal with a shortcut that is a bit easier
--- for people to discover. Otherwise, you normally need to press <C-\><C-n>, which
--- is not what someone will guess without a bit more experience.
---
--- NOTE: This won't work in all terminal emulators/tmux/etc. Try your own mapping
--- or just use <C-\><C-n> to exit terminal mode
-vim.keymap.set('t', '<Esc><Esc>', '<C-\\><C-n>', { desc = 'Exit terminal mode' })
+-- <Esc> is left unmapped in terminal mode so it passes straight through to the running
+-- program (e.g. an interactive agent that uses Esc to interrupt). Exit terminal mode with
+-- the builtin <C-\><C-n>, then use <C-h/j/k/l> to switch windows.
 
 -- Open a terminal in a vertical split
 vim.keymap.set('n', '<leader>T', '<cmd>vsplit | terminal<CR>', { desc = 'Open [T]erminal in vertical split' })
@@ -48,6 +44,14 @@ vim.keymap.set('n', '<C-h>', '<C-w><C-h>', { desc = 'Move focus to the left wind
 vim.keymap.set('n', '<C-l>', '<C-w><C-l>', { desc = 'Move focus to the right window' })
 vim.keymap.set('n', '<C-j>', '<C-w><C-j>', { desc = 'Move focus to the lower window' })
 vim.keymap.set('n', '<C-k>', '<C-w><C-k>', { desc = 'Move focus to the upper window' })
+
+-- Switch windows straight from terminal mode. Each leaves terminal-insert via <C-\><C-n>
+-- first, so nothing is sent to the running program (an agent keeps running). Requires the
+-- terminal to send Alt as Meta; in Ghostty set `macos-option-as-alt = true`.
+vim.keymap.set('t', '<A-h>', '<C-\\><C-n><C-w>h', { desc = 'Move focus to the left window' })
+vim.keymap.set('t', '<A-l>', '<C-\\><C-n><C-w>l', { desc = 'Move focus to the right window' })
+vim.keymap.set('t', '<A-j>', '<C-\\><C-n><C-w>j', { desc = 'Move focus to the lower window' })
+vim.keymap.set('t', '<A-k>', '<C-\\><C-n><C-w>k', { desc = 'Move focus to the upper window' })
 
 -- Neotree comamnds
 vim.keymap.set('n', '<leader>e', ':Neotree toggle<CR>', { desc = 'Toggle file [E]xplorer' })

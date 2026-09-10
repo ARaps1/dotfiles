@@ -5,7 +5,8 @@
 
 local M = {}
 
-local CONFIG = vim.fn.expand '~/dotfiles/litellm.yaml'
+local REPO = vim.fn.expand '~/dotfiles'
+local CONFIG = REPO .. '/litellm.yaml'
 
 -- Watchdog: sleep while any nvim is alive, then stop the proxy and exit. Polls every 30s,
 -- so the proxy is reclaimed within ~30s of the last nvim closing, however it closed.
@@ -34,7 +35,11 @@ function M.start()
   end
   vim.system({ 'litellm', '--config', CONFIG, '--host', '127.0.0.1', '--port', '4000' }, {
     detach = true,
-    env = { AWS_PROFILE = 'dev.ai-inference' },
+    env = {
+      AWS_PROFILE = 'dev.ai-inference',
+      -- Let the usage-logger callback (litellm_usage_logger.py) import from the repo.
+      PYTHONPATH = REPO .. (vim.env.PYTHONPATH and (':' .. vim.env.PYTHONPATH) or ''),
+    },
   })
   vim.system({ 'sh', '-c', WATCHDOG }, { detach = true })
 end

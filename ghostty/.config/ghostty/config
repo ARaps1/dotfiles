@@ -1,0 +1,6 @@
+# Ghostty configuration. Symlinked to ~/.config/ghostty/config by `setup.sh ghostty`.
+
+# Send the macOS Option key as Alt/Meta so Neovim receives <A-...> key sequences
+# (used for terminal-mode window navigation: Option+h/j/k/l). Set to `left` instead
+# to keep the right Option key free for typing special characters.
+macos-option-as-alt = true
