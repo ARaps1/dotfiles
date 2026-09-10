@@ -108,5 +108,8 @@ require 'lazy-plugins'
 -- [[ Show the current branch's PR review comments on the files they annotate ]]
 require('pr_comments').setup()
 
+-- [[ Editor helpers: copy repo-relative path, run tests via dev (file or diff) ]]
+require('dev_helpers').setup()
+
 -- The line beneath this is called `modeline`. See `:help modeline`
 -- vim: ts=2 sts=2 sw=2 et
