@@ -13,6 +13,9 @@ local COMMENT_NS = vim.api.nvim_create_namespace 'pr_comments'
 local DIFF_NS = vim.api.nvim_create_namespace 'pr_comments_diff'
 local SIGN_NS = vim.api.nvim_create_namespace 'pr_comments_signs'
 
+-- File where the enabled layers are persisted so they restore across sessions.
+local STATE_FILE = vim.fn.stdpath 'state' .. '/pr_comments.json'
+
 -- Whether the inline thread overlay is active.
 M._enabled = false
 -- Whether referenced ranges are highlighted.
@@ -607,6 +610,47 @@ local function reconcile()
   end
 end
 
+--- Persist the enabled layers so they restore in the next session.
+local function save_state()
+  local state = {
+    enabled = M._enabled,
+    diff = M._diff_enabled,
+    signs = M._signs_enabled,
+    show_resolved = M._show_resolved,
+    collapse_all = M._collapse_all,
+  }
+  local ok, encoded = pcall(vim.json.encode, state)
+  if not ok then
+    return
+  end
+  vim.fn.mkdir(vim.fn.fnamemodify(STATE_FILE, ':h'), 'p')
+  local file = io.open(STATE_FILE, 'w')
+  if not file then
+    return
+  end
+  file:write(encoded)
+  file:close()
+end
+
+--- Load the persisted layer state into the module flags.
+local function restore_state()
+  local file = io.open(STATE_FILE, 'r')
+  if not file then
+    return
+  end
+  local content = file:read '*a'
+  file:close()
+  local ok, state = pcall(vim.json.decode, content or '')
+  if not ok or type(state) ~= 'table' then
+    return
+  end
+  M._enabled = state.enabled == true
+  M._diff_enabled = state.diff == true
+  M._signs_enabled = state.signs == true
+  M._show_resolved = state.show_resolved == true
+  M._collapse_all = state.collapse_all == true
+end
+
 --- Load the current buffer's entry and invoke `cb` with the first thread on the cursor
 --- line (and that line), or notify and skip when there is none.
 --- @param cb fun(bufnr: integer, entry: table, thread: table, anchor: integer)
@@ -637,7 +681,41 @@ function M.toggle()
   M._enabled = not M._enabled
   ensure_highlights()
   reconcile()
+  save_state()
   vim.notify('PR comments: ' .. (M._enabled and 'on' or 'off'), vim.log.levels.INFO)
+end
+
+--- Turn on the full experience: inline overlay, referenced-range highlight, gutter
+--- signs, expanded threads, and resolved threads hidden.
+function M.enable()
+  M._enabled = true
+  M._diff_enabled = true
+  M._signs_enabled = true
+  M._show_resolved = false
+  M._collapse_all = false
+  ensure_highlights()
+  reconcile()
+  save_state()
+  vim.notify('PR comments: enabled', vim.log.levels.INFO)
+end
+
+--- Turn off every layer.
+function M.disable()
+  M._enabled = false
+  M._diff_enabled = false
+  M._signs_enabled = false
+  reconcile()
+  save_state()
+  vim.notify('PR comments: disabled', vim.log.levels.INFO)
+end
+
+--- Enable the full experience when nothing is active, otherwise turn everything off.
+function M.toggle_all()
+  if any_layer_active() then
+    M.disable()
+  else
+    M.enable()
+  end
 end
 
 --- Toggle highlighting of the lines each thread references.
@@ -645,6 +723,7 @@ function M.diff()
   M._diff_enabled = not M._diff_enabled
   ensure_highlights()
   reconcile()
+  save_state()
   vim.notify('PR comment highlight: ' .. (M._diff_enabled and 'on' or 'off'), vim.log.levels.INFO)
 end
 
@@ -652,6 +731,7 @@ end
 function M.toggle_resolved()
   M._show_resolved = not M._show_resolved
   reconcile()
+  save_state()
   vim.notify('PR resolved threads: ' .. (M._show_resolved and 'shown' or 'hidden'), vim.log.levels.INFO)
 end
 
@@ -669,6 +749,7 @@ function M.collapse_all()
   M._collapse_all = not M._collapse_all
   collapse_override = {}
   reconcile()
+  save_state()
 end
 
 --- Toggle sign-column markers on commented lines.
@@ -676,6 +757,7 @@ function M.toggle_signs()
   M._signs_enabled = not M._signs_enabled
   ensure_highlights()
   reconcile()
+  save_state()
   vim.notify('PR comment signs: ' .. (M._signs_enabled and 'on' or 'off'), vim.log.levels.INFO)
 end
 
@@ -777,6 +859,21 @@ function M.float()
       end
     end
     vim.lsp.util.open_floating_preview(markdown, 'markdown', { border = 'rounded', focusable = true })
+  end)
+end
+
+--- Copy the body text of the thread on the line under the cursor to the unnamed and
+--- system-clipboard registers. Multiple comments are joined with a blank line.
+function M.yank()
+  with_thread_at_cursor(function(_, _, thread)
+    local bodies = {}
+    for _, comment in ipairs(thread.comments) do
+      table.insert(bodies, comment.body)
+    end
+    local text = table.concat(bodies, '\n\n')
+    vim.fn.setreg('"', text)
+    vim.fn.setreg('+', text)
+    vim.notify('PR comment yanked', vim.log.levels.INFO)
   end)
 end
 
@@ -1032,7 +1129,14 @@ function M.setup(opts)
   opts = opts or {}
   local auto_refresh = opts.auto_refresh ~= false
 
+  restore_state()
+  if any_layer_active() then
+    ensure_highlights()
+  end
+
   local actions = {
+    enable = M.enable,
+    disable = M.disable,
     toggle = M.toggle,
     diff = M.diff,
     signs = M.toggle_signs,
@@ -1043,6 +1147,7 @@ function M.setup(opts)
     prev = M.prev,
     list = M.list,
     float = M.float,
+    yank = M.yank,
     reply = M.reply,
     resolve = M.resolve,
     refresh = M.refresh,
@@ -1095,6 +1200,21 @@ function M.setup(opts)
     })
   end
 
+  -- Render restored layers once the startup file is displayed. When setup runs after
+  -- startup, render immediately instead.
+  if any_layer_active() then
+    if vim.v.vim_did_enter == 1 then
+      vim.schedule(rerender_visible)
+    else
+      vim.api.nvim_create_autocmd('VimEnter', {
+        group = group,
+        once = true,
+        callback = rerender_visible,
+      })
+    end
+  end
+
+  vim.keymap.set('n', '<leader>ce', M.toggle_all, { desc = 'PR comments: [E]nable/disable all' })
   vim.keymap.set('n', '<leader>ct', M.toggle, { desc = 'PR comments: [T]oggle inline overlay' })
   vim.keymap.set('n', '<leader>cd', M.diff, { desc = 'PR comments: toggle [D]iff highlight' })
   vim.keymap.set('n', '<leader>cs', M.toggle_signs, { desc = 'PR comments: toggle gutter [S]igns' })
@@ -1105,6 +1225,7 @@ function M.setup(opts)
   vim.keymap.set('n', '<leader>cn', M.next, { desc = 'PR comments: [N]ext comment in file' })
   vim.keymap.set('n', '<leader>cp', M.prev, { desc = 'PR comments: [P]revious comment in file' })
   vim.keymap.set('n', '<leader>cf', M.float, { desc = 'PR comments: [F]loat thread on line' })
+  vim.keymap.set('n', '<leader>cy', M.yank, { desc = 'PR comments: [Y]ank comment text' })
   vim.keymap.set('n', '<leader>cR', M.reply, { desc = 'PR comments: [R]eply to thread' })
   vim.keymap.set('n', '<leader>cx', M.resolve, { desc = 'PR comments: resolve/unresolve thread' })
   vim.keymap.set('n', '<leader>cr', M.refresh, { desc = 'PR comments: [R]efresh from GitHub' })
