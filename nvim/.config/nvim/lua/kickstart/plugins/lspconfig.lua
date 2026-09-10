@@ -22,7 +22,7 @@ return {
               'ts_ls',
               'vtsls',
               'eslint',
-              'pyright',
+              'ty',
               'graphql',
               'ruff',
               'lua_ls',
@@ -34,10 +34,10 @@ return {
             'eslint',
             'graphql',
             'lua_ls',
-            'pyright',
             'ruff',
             'spectral',
             'ts_ls',
+            'ty',
             'vtsls',
             'yamlls',
             'zls',
@@ -270,50 +270,18 @@ return {
           end,
         },
 
-        pyright = {
+        -- Python type checking / language server. Uses the `ty.*` settings from aurelia.code-workspace.
+        ty = {
           root_dir = root.ruff_root_dir,
-          before_init = function(_, config)
-            config.settings = config.settings or {}
-            config.settings.python = config.settings.python or {}
-            local rd = config.root_dir
-            local benchling_js = type(rd) == 'string' and rd ~= '' and vim.fn.filereadable(rd .. '/eslint.config.js') == 1
-              and vim.fn.filereadable(rd .. '/package.json') == 1
-            if benchling_js then
-              local extra = root.aurelia_default_pyright_extra_paths(rd)
-              if type(vim.g.aurelia_pyright_extra_paths) == 'table' then
-                vim.list_extend(extra, vim.g.aurelia_pyright_extra_paths)
-              end
-              config.settings.python.analysis = vim.tbl_deep_extend('force', config.settings.python.analysis or {}, {
-                typeCheckingMode = 'off',
-                autoSearchPaths = false,
-                useLibraryCodeForTypes = true,
-                diagnosticMode = 'openFilesOnly',
-                extraPaths = extra,
-              })
-            else
-              config.settings.python.analysis = vim.tbl_deep_extend('force', config.settings.python.analysis or {}, {
-                autoSearchPaths = true,
-                useLibraryCodeForTypes = true,
-                diagnosticMode = 'openFilesOnly',
-              })
-            end
-            local python_path
-            if vim.env.VIRTUAL_ENV and vim.fn.executable(vim.env.VIRTUAL_ENV .. '/bin/python') == 1 then
-              python_path = vim.env.VIRTUAL_ENV .. '/bin/python'
-            elseif vim.env.AURELIA_PYTHON and vim.fn.executable(vim.env.AURELIA_PYTHON) == 1 then
-              python_path = vim.env.AURELIA_PYTHON
-            elseif vim.env.AURELIA_PYTHON_VENV and vim.fn.executable(vim.env.AURELIA_PYTHON_VENV .. '/bin/python') == 1 then
-              python_path = vim.env.AURELIA_PYTHON_VENV .. '/bin/python'
-            end
-            if python_path then
-              config.settings.python = vim.tbl_deep_extend('force', config.settings.python or {}, {
-                pythonPath = python_path,
-              })
-            end
-          end,
           settings = {
-            python = {
-              analysis = {},
+            ty = {
+              diagnosticMode = 'openFilesOnly',
+              completions = {
+                autoImport = true,
+              },
+              inlayHints = {
+                callArgumentNames = true,
+              },
             },
           },
         },

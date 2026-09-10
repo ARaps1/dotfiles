@@ -44,7 +44,7 @@ First launch takes ~1 minute while plugins and LSP servers install. Treesitter p
 | **ts_ls** | TypeScript/JavaScript | Type checking, completions, go-to-def, inlay hints |
 | **vtsls** | TypeScript/JavaScript | Alternative to ts_ls (VS Code-aligned); toggle with `vim.g.kickstart_use_vtsls = 1` |
 | **eslint** | TypeScript/JavaScript | Lint via flat config (`eslint.config.js`); integrates oxlint rules |
-| **pyright** | Python | Completions, go-to-def, import resolution (`typeCheckingMode = off` for Benchling) |
+| **ty** | Python | Type diagnostics, completions, go-to-def, import resolution (Astral's fast type checker; mirrors `ty.*` in `aurelia.code-workspace`) |
 | **ruff** | Python | Real-time lint + format diagnostics (reads `pyproject.toml`) |
 | **graphql** | GraphQL | Schema-aware completions, diagnostics (reads `graphql.config.yml`) |
 | **lua_ls** | Lua | For editing Neovim config |
@@ -66,7 +66,7 @@ First launch takes ~1 minute while plugins and LSP servers install. Treesitter p
 
 | Filetype | Linter | Notes |
 |----------|--------|-------|
-| Python | mypy | Type checking; reads `mypy.ini` from repo root. Slower than LSP diagnostics (~5-10s). |
+| Python | mypy | Full-workspace type checking against `mypy.ini` (matches CI); complements ty's real-time diagnostics. Slower (~5-10s). |
 | Markdown | markdownlint | Style checks |
 
 **Why not more linters?** Ruff LSP already provides all Python lint diagnostics in real-time. ESLint LSP already integrates oxlint's 350+ rules via `eslint-plugin-oxlint`. Adding them to nvim-lint would duplicate every diagnostic.
@@ -98,9 +98,7 @@ vim, vimdoc, yaml
 
 | Variable | Purpose |
 |----------|---------|
-| `VIRTUAL_ENV` | Pyright uses `$VIRTUAL_ENV/bin/python` when set |
-| `AURELIA_PYTHON` | Explicit python path for Pyright |
-| `AURELIA_PYTHON_VENV` | Venv root path for Pyright |
+| `VIRTUAL_ENV` | ty and Ruff resolve imports and packages from this environment when set |
 
 Put the dev venv's `bin` before Mason's shims on `PATH` if you need the same tool versions as `dev run shell`.
 
@@ -110,17 +108,16 @@ Put the dev venv's `bin` before Mason's shims on `PATH` if you need the same too
 |--------|---------|--------|
 | `vim.g.kickstart_use_vtsls` | false | Use vtsls instead of ts_ls |
 | `vim.g.aurelia_eslint_full_type_aware` | false | Use full `eslint.config.js` (slow) vs skip-type-aware (fast, default) |
-| `vim.g.aurelia_pyright_extra_paths` | nil | Additional Pyright import paths (table of strings) |
 
-### Pyright import resolution
+### ty import resolution
 
-When the Benchling root is detected, Pyright uses `autoSearchPaths = false` with explicit `extraPaths`: `.`, `src`, `tests`, `scripts`, `services/monolith`. This matches the VS Code workspace config and resolves `benchling.*`, `tests.*` imports correctly.
+ty resolves first-party imports such as `benchling.*` and `tests.*` from the active Python environment (the dev venv, or the interpreter on `PATH`). No per-project `extraPaths` configuration is needed.
 
 ## Verification Checklist
 
 ### Python (open a `.py` file in the Benchling repo)
 
-- [ ] `:LspInfo` shows **pyright** and **ruff** attached
+- [ ] `:LspInfo` shows **ty** and **ruff** attached
 - [ ] Ruff diagnostics appear (import sorting, unused imports)
 - [ ] Save (`:w`) triggers ruff_fix + ruff_format (imports sort, code formats)
 - [ ] After save, mypy diagnostics appear (may take 5-10s on first run)
@@ -205,11 +202,10 @@ When the Benchling root is detected, Pyright uses `autoSearchPaths = false` with
 3. Ensure `node_modules` exists: run `yarn install` in the repo
 4. Verify `eslint.config.js` exists at repo root
 
-### Pyright can't resolve imports
+### ty can't resolve imports
 
-1. Set `VIRTUAL_ENV` to your dev venv path, or
-2. Set `AURELIA_PYTHON_VENV` in your shell profile, or
-3. Add custom paths: `vim.g.aurelia_pyright_extra_paths = { 'path/to/extra' }`
+1. Set `VIRTUAL_ENV` to your dev venv path so ty picks up the right interpreter and packages, or
+2. Put the dev venv's `bin` before Mason's shims on `PATH`.
 
 ### mypy is too slow
 

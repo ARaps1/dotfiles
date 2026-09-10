@@ -128,25 +128,7 @@ function M.graphql_root_dir(bufnr, on_dir)
   on_dir(resolved or vim.fs.root(fname, { '.git' }) or vim.fn.fnamemodify(fname, ':p:h'))
 end
 
--- Paths Pylance uses via python.analysis.extraPaths in aurelia.code-workspace; required when
--- autoSearchPaths is false so Pyright resolves `benchling.*`, `tests.*` under `src/`, etc.
---- @param repo_root string
---- @return string[]
-function M.aurelia_default_pyright_extra_paths(repo_root)
-  if vim.fn.isdirectory(repo_root) ~= 1 then
-    return {}
-  end
-  local out = {}
-  for _, rel in ipairs { '.', 'src', 'tests', 'scripts', 'services/monolith' } do
-    local full = rel == '.' and repo_root or (repo_root .. '/' .. rel)
-    if vim.fn.isdirectory(full) == 1 then
-      out[#out + 1] = rel
-    end
-  end
-  return out
-end
-
--- Ruff / Pyright: monorepo root matches VS Code single-folder workspace (git root with markers).
+-- Ruff / ty: monorepo root matches VS Code single-folder workspace (git root with markers).
 --- @param bufnr integer
 --- @param on_dir fun(path: string)
 function M.ruff_root_dir(bufnr, on_dir)

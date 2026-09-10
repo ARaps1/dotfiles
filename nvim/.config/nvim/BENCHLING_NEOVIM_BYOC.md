@@ -12,7 +12,7 @@ Add Benchling-aligned LSP, formatting, and linting to your **existing** Neovim s
 
 | Layer | Tool | Languages |
 |-------|------|-----------|
-| LSP | pyright, ruff | Python |
+| LSP | ty, ruff | Python |
 | LSP | ts_ls, eslint | TypeScript / JavaScript / React |
 | LSP | graphql | GraphQL |
 | Formatting | oxfmt (via conform.nvim) | JS/TS/TSX/JSX/CSS/Less |
@@ -148,7 +148,7 @@ function M.graphql_root_dir(bufnr, on_dir)
   on_dir(resolved or vim.fs.root(fname, { '.git' }) or vim.fn.fnamemodify(fname, ':p:h'))
 end
 
---- root_dir for Ruff / Pyright. Monorepo root or nearest pyproject.toml.
+--- root_dir for Ruff / ty. Monorepo root or nearest pyproject.toml.
 ---@param bufnr integer
 ---@param on_dir fun(path: string)
 function M.ruff_root_dir(bufnr, on_dir)
@@ -158,21 +158,6 @@ function M.ruff_root_dir(bufnr, on_dir)
     return
   end
   on_dir(vim.fs.root(bufnr, { 'pyproject.toml', 'ruff.toml', '.git' }) or vim.fn.getcwd())
-end
-
---- Default Pyright extra paths for Benchling repos (matches VS Code workspace config).
----@param repo_root string
----@return string[]
-function M.aurelia_default_pyright_extra_paths(repo_root)
-  if vim.fn.isdirectory(repo_root) ~= 1 then return {} end
-  local out = {}
-  for _, rel in ipairs { '.', 'src', 'tests', 'scripts', 'services/monolith' } do
-    local full = rel == '.' and repo_root or (repo_root .. '/' .. rel)
-    if vim.fn.isdirectory(full) == 1 then
-      out[#out + 1] = rel
-    end
-  end
-  return out
 end
 
 return M
@@ -189,7 +174,7 @@ Add this plugin spec to your lazy.nvim setup. It configures all LSP servers with
 **What it does:**
 - TypeScript: uses the repo's `node_modules/typescript` and allocates 6GB memory
 - ESLint: flat config support, uses `eslint.config.skip-type-aware-rules.js` for speed
-- Pyright: `typeCheckingMode = off` for Benchling (mypy is the real type checker), auto-resolves `benchling.*` imports
+- ty: Astral's fast Python type checker + language server; settings mirror `ty.*` in `aurelia.code-workspace`
 - Ruff: real-time Python lint + format diagnostics
 - GraphQL: schema-aware completions from `graphql.config.yml`
 
@@ -208,13 +193,13 @@ Add this plugin spec to your lazy.nvim setup. It configures all LSP servers with
           -- Exclude servers we configure manually below so Mason doesn't
           -- call vim.lsp.enable before our merged config is registered.
           exclude = {
-            'ts_ls', 'vtsls', 'eslint', 'pyright', 'graphql',
+            'ts_ls', 'vtsls', 'eslint', 'ty', 'graphql',
             'ruff', 'lua_ls', 'spectral', 'yamlls',
           },
         },
         ensure_installed = {
-          'eslint', 'graphql', 'lua_ls', 'pyright', 'ruff',
-          'spectral', 'ts_ls', 'vtsls', 'yamlls',
+          'eslint', 'graphql', 'lua_ls', 'ruff',
+          'spectral', 'ts_ls', 'ty', 'vtsls', 'yamlls',
         },
       },
       dependencies = {
@@ -423,50 +408,16 @@ Add this plugin spec to your lazy.nvim setup. It configures all LSP servers with
         end,
       },
 
-      -- Python: type analysis + completions
-      pyright = {
+      -- Python: type diagnostics + completions (ty.* settings from aurelia.code-workspace)
+      ty = {
         root_dir = root.ruff_root_dir,
-        before_init = function(_, config)
-          config.settings = config.settings or {}
-          config.settings.python = config.settings.python or {}
-          local rd = config.root_dir
-          -- Detect Benchling monorepo
-          local is_benchling = type(rd) == 'string' and rd ~= ''
-            and vim.fn.filereadable(rd .. '/eslint.config.js') == 1
-            and vim.fn.filereadable(rd .. '/package.json') == 1
-          if is_benchling then
-            local extra = root.aurelia_default_pyright_extra_paths(rd)
-            if type(vim.g.benchling_pyright_extra_paths) == 'table' then
-              vim.list_extend(extra, vim.g.benchling_pyright_extra_paths)
-            end
-            config.settings.python.analysis = vim.tbl_deep_extend(
-              'force', config.settings.python.analysis or {}, {
-                typeCheckingMode = 'off',   -- mypy is the real type checker
-                autoSearchPaths = false,
-                useLibraryCodeForTypes = true,
-                diagnosticMode = 'openFilesOnly',
-                extraPaths = extra,
-              })
-          else
-            config.settings.python.analysis = vim.tbl_deep_extend(
-              'force', config.settings.python.analysis or {}, {
-                autoSearchPaths = true,
-                useLibraryCodeForTypes = true,
-                diagnosticMode = 'openFilesOnly',
-              })
-          end
-          -- Resolve python path: VIRTUAL_ENV > BENCHLING_PYTHON > fallback
-          local python_path
-          if vim.env.VIRTUAL_ENV and vim.fn.executable(vim.env.VIRTUAL_ENV .. '/bin/python') == 1 then
-            python_path = vim.env.VIRTUAL_ENV .. '/bin/python'
-          end
-          if python_path then
-            config.settings.python = vim.tbl_deep_extend('force', config.settings.python or {}, {
-              pythonPath = python_path,
-            })
-          end
-        end,
-        settings = { python = { analysis = {} } },
+        settings = {
+          ty = {
+            diagnosticMode = 'openFilesOnly',
+            completions = { autoImport = true },
+            inlayHints = { callArgumentNames = true },
+          },
+        },
       },
 
       -- Python: lint + format diagnostics (reads pyproject.toml)
@@ -600,7 +551,7 @@ Runs formatters on save that match what Benchling CI checks (`OXFMT`, `RUFF_FORM
 
 ## Step 5: Linting (nvim-lint)
 
-Adds linters that LSP servers don't already cover. Specifically: **mypy** for Python type checking (Pyright is set to `typeCheckingMode = off` for Benchling, so mypy fills the gap).
+Adds linters that LSP servers don't already cover. Specifically: **mypy** for full-workspace Python type checking against `mypy.ini` (matches CI), complementing ty's real-time LSP diagnostics.
 
 <details>
 <summary><strong>Plugin spec: Linting</strong> (click to expand)</summary>
@@ -685,11 +636,8 @@ If you don't have treesitter yet:
 Add to your shell profile (`~/.zshrc`, `~/.bashrc`, etc.):
 
 ```bash
-# Tell Pyright where your dev Python lives.
-# Use ONE of these (first match wins):
+# Point ty and Ruff at your dev Python environment.
 export VIRTUAL_ENV="/path/to/your/dev/venv"
-# OR: export AURELIA_PYTHON="/path/to/python3"
-# OR: export AURELIA_PYTHON_VENV="/path/to/venv/root"
 ```
 
 ---
@@ -702,7 +650,7 @@ After restarting Neovim and opening a file in the Benchling repo:
 ```
 :LspInfo
 ```
-Should show **pyright** and **ruff** attached. Save the file — imports should sort and code should format. After a few seconds, mypy diagnostics appear.
+Should show **ty** and **ruff** attached. Save the file — imports should sort and code should format. After a few seconds, mypy diagnostics appear.
 
 ### TypeScript (.ts / .tsx file)
 ```
@@ -744,8 +692,8 @@ Should show **graphql** attached with schema-aware completions.
 **ESLint not attaching:**
 Check that `node_modules` exists (`yarn install`). Check `:LspLog` for errors. Verify `eslint.config.js` exists at the repo root.
 
-**Pyright can't resolve `benchling.*` imports:**
-Set `VIRTUAL_ENV` in your shell, or add paths via `vim.g.benchling_pyright_extra_paths = { 'extra/path' }` in your init.lua.
+**ty can't resolve `benchling.*` imports:**
+Set `VIRTUAL_ENV` in your shell so ty uses the right interpreter and packages, or put the dev venv's `bin` before Mason's shims on `PATH`.
 
 **oxfmt not found / not formatting:**
 Run `npx oxfmt --version` from the repo root. If it fails, run `yarn install`. Check `:ConformInfo` to see if oxfmt is listed for the current filetype.
