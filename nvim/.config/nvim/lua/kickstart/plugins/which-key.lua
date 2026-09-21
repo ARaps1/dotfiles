@@ -33,6 +33,7 @@ return {
         { '<leader>c', group = 'PR [C]omments' },
         { '<leader>a', group = '[A]I' },
         { '<leader>h', group = 'Git [H]unk', mode = { 'n', 'v' } }, -- Enable gitsigns recommended keymaps first
+        { '<leader>g', group = '[G]it diff' },
         { 'gr', group = 'LSP Actions', mode = { 'n' } },
       },
     },

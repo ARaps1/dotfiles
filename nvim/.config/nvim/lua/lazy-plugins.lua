@@ -18,6 +18,8 @@ require('lazy').setup({
 
   require 'kickstart.plugins.gitsigns',
 
+  require 'kickstart.plugins.diffview',
+
   require 'kickstart.plugins.which-key',
 
   require 'kickstart.plugins.telescope',
