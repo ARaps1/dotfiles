@@ -414,6 +414,10 @@ tmux_setup() {
 
     # Create symlinks
     create_symlinks "tmux"
+
+    # Install the plugins declared in .tmux.conf (resurrect, continuum, etc.)
+    echo "Installing tmux plugins..."
+    "$TPM_PATH/bin/install_plugins"
     echo "tmux setup complete!"
 }
 
