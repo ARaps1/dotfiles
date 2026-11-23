@@ -434,6 +434,15 @@ herdr_mobile_setup() {
     mkdir -p "$HOME/.local/bin"
     create_symlinks "herdr-mobile"
 
+    # herdr-sim writes the simulator's frames into herdr-sim-screen. Mods may only
+    # write under ~/.config/herdr-app once symlinks are resolved, so that folder
+    # must be real: its files are copied, not linked. A rerun refreshes them.
+    local screen="$HOME/.config/herdr-app/mods/herdr-sim-screen"
+    [ -L "$screen" ] && rm "$screen"
+    mkdir -p "$screen"
+    cp "$SCRIPT_DIR"/herdr-mobile-copy/mods/herdr-sim-screen/* "$screen/"
+    echo "  Copied herdr-sim-screen (a real folder, so frames can be written)"
+
     # avdslim slims Android emulators. Built from source at a reviewed tag instead of
     # the release binary or install script. sim-dibs falls back to stock boots without it.
     local avdslim_tag="v1.0.17"
