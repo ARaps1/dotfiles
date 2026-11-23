@@ -1,0 +1,32 @@
+#!/bin/bash
+# xcrun through sim-dibs, for `xcrun simctl` only (every other xcrun use passes
+# through). `booted` means this terminal's leased simulator (claiming or booting
+# one); an explicit UDID must be ours. `boot` of a leased device is already done by
+# sim-dibs (slimmed). `shutdown|erase|delete all` would hit other sessions: refused.
+. "$(dirname "${BASH_SOURCE[0]}")/_lib.sh"
+real=/usr/bin/xcrun
+[ -n "${SIM_DIBS_BYPASS:-}" ] || [ "${1:-}" != simctl ] && exec "$real" "$@"
+
+sub="${2:-}" dev="${3:-}"
+case "$sub" in
+  ""|list|help|runtime|pair|unpair|pair_activate|create) exec "$real" "$@" ;;
+esac
+if [ "$dev" = all ]; then
+  case "$sub" in
+    shutdown|erase|delete)
+      echo "sim-dibs: refusing 'simctl $sub all': other sessions' simulators would go with it. Name your UDID, or SIM_DIBS_BYPASS=1." >&2
+      exit 3 ;;
+  esac
+  exec "$real" "$@"
+fi
+
+args=("$@")
+if [ "$dev" = booted ]; then
+  args[2]=$(lease ios) || exit 3
+elif is_udid "$dev"; then
+  lease "$dev" >/dev/null
+else
+  exec "$real" "$@"
+fi
+[ "$sub" = boot ] && exit 0  # sim-dibs booted (and slimmed) it
+exec "$real" "${args[@]}"

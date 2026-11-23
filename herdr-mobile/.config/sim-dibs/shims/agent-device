@@ -1,0 +1,30 @@
+#!/bin/bash
+# agent-device through sim-dibs: without --device/--udid/--serial, runs on this
+# terminal's leased device (the --platform one, else the only one it holds); a named
+# device must be ours. help, devices and version pass through.
+. "$(dirname "${BASH_SOURCE[0]}")/_lib.sh"
+real=$(real_tool agent-device)
+[ -n "$real" ] || { echo "sim-dibs shim: agent-device not found." >&2; exit 127; }
+[ -n "${SIM_DIBS_BYPASS:-}" ] && exec "$real" "$@"
+
+device="" platform="" cmd="" prev=""
+for a in "$@"; do
+  case "$prev" in --device|--udid|--serial) device="$a" ;; --platform) platform="$a" ;; esac
+  case "$a" in
+    --device=*|--udid=*|--serial=*) device="${a#*=}" ;;
+    --platform=*) platform="${a#*=}" ;;
+    -*) ;;
+    *) case "$prev" in --device|--udid|--serial|--platform) ;; *) [ -n "$cmd" ] || cmd="$a" ;; esac ;;
+  esac
+  prev="$a"
+done
+case "$cmd" in ""|help|devices|version|--help|--version) exec "$real" "$@" ;; esac
+
+if [ -n "$device" ]; then check_target "$device"; exec "$real" "$@"; fi
+t=$(target_for "$platform"); rc=$?
+[ $rc = 3 ] && exit 3
+[ $rc = 0 ] || exec "$real" "$@"
+case "${t%% *}" in
+  ios) exec "$real" "$@" --udid "${t#* }" ;;
+  android) exec "$real" "$@" --serial "${t#* }" ;;
+esac

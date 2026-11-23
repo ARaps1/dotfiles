@@ -1,0 +1,18 @@
+#!/bin/bash
+# emulator through sim-dibs: `emulator -avd <name>` (or `@name`) leases and boots the
+# AVD with sim-dibs, slimmed with avdslim, instead of a second stock launch. Other
+# uses (-list-avds, -version, ...) pass through.
+. "$(dirname "${BASH_SOURCE[0]}")/_lib.sh"
+real=$(real_tool emulator "$SDK/emulator/emulator")
+[ -n "$real" ] || { echo "sim-dibs shim: emulator not found (Android SDK)." >&2; exit 127; }
+[ -n "${SIM_DIBS_BYPASS:-}" ] && exec "$real" "$@"
+
+avd="" prev=""
+for a in "$@"; do
+  [ "$prev" = -avd ] && avd="$a"
+  case "$a" in @*) avd="${a#@}" ;; esac
+  prev="$a"
+done
+[ -n "$avd" ] || exec "$real" "$@"
+serial=$(lease "avd:$avd") || exit 3
+echo "sim-dibs: $avd is running for this terminal as $serial." >&2

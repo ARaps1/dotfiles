@@ -1,0 +1,60 @@
+#!/bin/sh
+# herdr-supabase-logs: one shared terminal following the local Supabase
+# containers' logs (Docker), named supabase-logs-<project_id>. Shared by every
+# session on the same stack; it isn't tied to any session. In a repo with
+# per-worktree stacks (herdr-supabase) each worktree's stack has its own.
+#
+#   herdr-supabase-logs start    start following (no-op if already running)
+#   herdr-supabase-logs [toggle|show|hide]   start if needed, then the pane beside the simulator (default: toggle)
+#   herdr-supabase-logs read     print the recent logs (hc read)
+#   herdr-supabase-logs stop
+#
+# Services: SUPABASE_LOG_SERVICES (default "edge_runtime auth rest db"). Others:
+# storage realtime kong studio meta. project_id comes from supabase/config.toml.
+
+set -u
+cmd="${1:-toggle}"
+
+root=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "herdr-supabase-logs: not in a git repo." >&2; exit 1; }
+cfg="$root/supabase/config.toml"
+[ -f "$cfg" ] || { echo "herdr-supabase-logs: no supabase/config.toml in $root." >&2; exit 1; }
+# A repo with per-worktree stacks (scripts/supabase-env.sh) names this
+# worktree's project (<project_id>-<slot>); otherwise config.toml's.
+project=""
+[ -f "$root/scripts/supabase-env.sh" ] \
+  && project=$(bash -c 'source "$1/scripts/supabase-env.sh" >/dev/null && printf "%s" "$SUPABASE_PROJECT_ID"' _ "$root" 2>/dev/null)
+[ -n "$project" ] || project=$(sed -n 's/^project_id *= *"\(.*\)"/\1/p' "$cfg" | head -1)
+[ -n "$project" ] || project=$(basename "$root")
+name="supabase-logs-$(printf '%s' "$project" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9_-' '-' | cut -c1-18)"
+services="${SUPABASE_LOG_SERVICES:-edge_runtime auth rest db}"
+
+running() { hc get "$name" 2>/dev/null | jq -e '.state == "live"' >/dev/null 2>&1; }
+
+start() {
+  running && return 0
+  hc rm "$name" >/dev/null 2>&1
+  follow=""
+  for s in $services; do
+    c="supabase_${s}_${project}"
+    follow="$follow docker logs -f --tail 30 $c 2>&1 | sed -u 's/^/[$s] /' &"
+  done
+  # Keep following across `supabase stop/start`: re-attach when containers come back.
+  script="printf '\\033]0;Supabase logs\\007'; while true; do
+    if docker ps --format '{{.Names}}' | grep -q '^supabase_db_${project}\$'; then
+      $follow wait; echo '[herdr] containers stopped; waiting for supabase start…'
+    fi
+    sleep 3
+  done"
+  hc run --bg --no-parent --outlive-parent --name "$name" --cwd "$root" -- \
+    "${SHELL:-/bin/zsh}" -lc "$script" >/dev/null || { echo "herdr-supabase-logs: hc run failed." >&2; exit 1; }
+  echo "herdr-supabase-logs: following $services for $project (terminal $name)."
+}
+
+case "$cmd" in
+  start) start; running && echo "  logs: hc read $name   (pane: herdr-supabase-logs toggle)" ;;
+  show|hide|toggle) [ "$cmd" = hide ] || start; exec herdr-logs "$cmd" "$name" ;;
+  read) exec hc read "$name" ;;
+  stop) running && hc kill "$name" >/dev/null; hc rm "$name" >/dev/null 2>&1; echo "herdr-supabase-logs: stopped." ;;
+  name) echo "$name" ;;
+  *) echo "usage: herdr-supabase-logs start|toggle|show|hide|read|stop|name" >&2; exit 2 ;;
+esac

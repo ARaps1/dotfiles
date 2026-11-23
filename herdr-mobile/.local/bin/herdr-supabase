@@ -1,0 +1,35 @@
+#!/bin/sh
+# herdr-supabase: this git worktree's own local Supabase, like herdr-expo is its
+# own Metro. Each worktree gets a slot: its own containers, data and ports
+# (main checkout: API 55321; slot N: 55321 + N*100). The work is done by the
+# repo's scripts/db.sh and scripts/supabase-env.sh; this finds them from
+# anywhere in the worktree.
+#
+#   herdr-supabase start [--full] [--force]   start this worktree's stack (slim by default)
+#   herdr-supabase stop                       stop it, keep its data
+#   herdr-supabase destroy                    stop it, delete its data, free the slot
+#   herdr-supabase info | list | prune        this slot | every slot | destroy removed worktrees' stacks
+#   herdr-supabase port                       this worktree's API port
+#   herdr-supabase env                        export lines for the Supabase CLI in this shell
+#   herdr-supabase psql [ARGS]                psql into this worktree's database
+#   herdr-supabase cli ARGS                   the Supabase CLI for this worktree (scripts/supabase.sh)
+#   herdr-supabase logs [show|hide|toggle|read]   herdr-supabase-logs for this worktree's stack
+
+set -u
+cmd="${1:-info}"
+[ $# -gt 0 ] && shift
+
+root=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "herdr-supabase: not in a git worktree." >&2; exit 1; }
+[ -f "$root/scripts/db.sh" ] && [ -f "$root/scripts/supabase-env.sh" ] || {
+  echo "herdr-supabase: $(basename "$root") has no per-worktree Supabase (scripts/db.sh, scripts/supabase-env.sh)." >&2
+  exit 1
+}
+
+case "$cmd" in
+  start|stop|destroy|info|list|prune|psql) exec bash "$root/scripts/db.sh" "$cmd" "$@" ;;
+  port) exec bash -c 'source "$1/scripts/supabase-env.sh" && echo "$SUPABASE_API_PORT"' _ "$root" ;;
+  env) exec bash -c 'source "$1/scripts/supabase-env.sh" && env | grep -E "^SUPABASE_(SLOT|PROJECT_ID|[A-Z_]*PORT)=" | sed "s/^/export /"' _ "$root" ;;
+  cli) exec bash "$root/scripts/supabase.sh" "$@" ;;
+  logs) exec herdr-supabase-logs "${1:-toggle}" ;;
+  *) echo "usage: herdr-supabase start|stop|destroy|info|list|prune|port|env|psql|cli|logs" >&2; exit 2 ;;
+esac

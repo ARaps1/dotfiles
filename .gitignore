@@ -1,3 +1,8 @@
 # Python bytecode cache from litellm_usage_logger.py (regenerated when the proxy runs)
 __pycache__/
 *.pyc
+
+# Herdr writes these into each linked mod folder at runtime
+herdr-mobile/.config/herdr-app/mods/*/jsconfig.json
+herdr-mobile/.config/herdr-app/mods/*/gpui-kit.d.ts
+herdr-mobile/.config/herdr-app/mods/herdr-sim-screen/*.jpg

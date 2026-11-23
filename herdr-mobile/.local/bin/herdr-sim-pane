@@ -1,0 +1,80 @@
+#!/bin/sh
+# herdr-sim-pane: show the iOS simulator / Android emulator in a Herdr pane
+# right next to the agent session that calls this.
+#
+#   herdr-sim-pane              open (or keep) the pane; shows the first booted device
+#   herdr-sim-pane ios          ... first booted iOS simulator
+#   herdr-sim-pane android      ... first booted Android emulator
+#   herdr-sim-pane <udid>       ... that iOS simulator (booted by the pane if off)
+#   herdr-sim-pane avd:<name>   ... that Android emulator
+#   herdr-sim-pane --close      close this session's pane
+#
+# Idempotent: one pane per calling terminal. Calling again with a different
+# device reopens the pane on it. Outside Herdr it prints a note and exits 0.
+# Pane view comes from the herdr-sim mod (github.com/wobsoriano/herdr-sim),
+# installed in ~/.config/herdr-app/mods/herdr-sim with a local props.device patch.
+
+set -u
+want="${1:-}"
+
+if [ -z "${HC_TERMINAL_ID:-}" ] || ! command -v herdr-app >/dev/null 2>&1; then
+  echo "herdr-sim-pane: not running inside Herdr; skipping the simulator pane." >&2
+  exit 0
+fi
+
+state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/herdr-sim-pane"
+state="$state_dir/$HC_TERMINAL_ID"
+mkdir -p "$state_dir"
+
+# Does pane $1 still exist? A self-swap is refused without doing anything:
+# "target is the pane itself" when it exists, "no pane" when it doesn't.
+pane_exists() {
+  herdr-app do pane.swap "{\"pane\":\"$1\",\"target\":\"$1\"}" 2>&1 | grep -q "pane itself"
+}
+
+old_pane="" old_want=""
+if [ -f "$state" ]; then
+  old_pane=$(sed -n 1p "$state")
+  old_want=$(sed -n 2p "$state")
+  if [ -n "$old_pane" ] && ! pane_exists "$old_pane"; then
+    old_pane=""
+    rm -f "$state"
+  fi
+fi
+
+if [ "$want" = "--close" ]; then
+  [ -n "$old_pane" ] && herdr-app do pane.close "{\"pane\":\"$old_pane\"}" >/dev/null
+  rm -f "$state"
+  echo "herdr-sim-pane: closed."
+  exit 0
+fi
+
+if [ -n "$old_pane" ]; then
+  if [ -z "$want" ] || [ "$want" = "$old_want" ]; then
+    echo "herdr-sim-pane: already open ($old_pane)."
+    exit 0
+  fi
+  herdr-app do pane.close "{\"pane\":\"$old_pane\"}" >/dev/null
+fi
+
+my_pane=$(herdr-app ls | jq -r --arg t "$HC_TERMINAL_ID" \
+  'first(.. | objects | select(.terminal? == $t) | .pane) // empty')
+if [ -z "$my_pane" ]; then
+  echo "herdr-sim-pane: terminal $HC_TERMINAL_ID isn't in a Herdr pane (headless?); skipping." >&2
+  exit 0
+fi
+
+if [ -n "$want" ]; then
+  args=$(jq -nc --arg p "$my_pane" --arg d "$want" \
+    '{direction:"right", pane:$p, mod:"herdr-sim", props:{device:$d}}')
+else
+  args=$(jq -nc --arg p "$my_pane" '{direction:"right", pane:$p, mod:"herdr-sim"}')
+fi
+
+# A split focuses the new pane; give the keyboard back to the session if it had it.
+was_focused=$(herdr-app status | jq -r '.focused_pane // empty')
+out=$(herdr-app do pane.split "$args") || { echo "herdr-sim-pane: $out" >&2; exit 1; }
+new_pane=$(printf '%s' "$out" | jq -r '.pane // empty')
+[ -n "$was_focused" ] && pane_exists "$was_focused" && herdr-app do pane.focus "{\"pane\":\"$was_focused\"}" >/dev/null
+printf '%s\n%s\n' "$new_pane" "$want" > "$state"
+echo "herdr-sim-pane: opened $new_pane beside $my_pane${want:+ (device: $want)}."

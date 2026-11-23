@@ -1,0 +1,9 @@
+{
+  "name": "mobile-dev",
+  "except": [],
+  "keep": [
+    "com.apple.akd",
+    "com.apple.appleaccountd",
+    "com.apple.apsd"
+  ]
+}

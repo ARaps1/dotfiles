@@ -1,0 +1,87 @@
+#!/bin/sh
+# herdr-expo: one Expo dev server (Metro) per git worktree, on its own stable
+# port, in an hc terminal named expo-<worktree>. Started from an agent session it
+# becomes that session's sub-agent: hidden under it in Herdr's Agents sidebar
+# (click to peek), shown beside the simulator with `herdr-expo logs`.
+#
+#   herdr-expo start    start Metro for this worktree (no-op if running); prints port + name
+#   herdr-expo port     this worktree's port (allocated on first use)
+#   herdr-expo name     this worktree's terminal name
+#   herdr-expo logs [show|hide|toggle]   logs pane right of the simulator (default: toggle)
+#   herdr-expo read     print the recent logs (hc read)
+#   herdr-expo stop     stop this worktree's Metro
+#
+# Ports: the first worktree to ask gets 8081, the next 8082, ...; kept in
+# ~/.local/state/herdr-expo/ports (port<TAB>worktree). A port whose worktree
+# is gone gets reused.
+
+set -u
+cmd="${1:-start}"
+
+root=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "herdr-expo: not in a git worktree." >&2; exit 1; }
+app="$root"
+for d in "$root/client" "$root/app" "$root/mobile"; do
+  if [ -f "$d/app.json" ] || [ -f "$d/app.config.ts" ] || [ -f "$d/app.config.js" ]; then app=$d; break; fi
+done
+
+name="expo-$(basename "$root" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9_-\n' '-' | cut -c1-27)"
+
+reg_dir="${XDG_STATE_HOME:-$HOME/.local/state}/herdr-expo"
+reg="$reg_dir/ports"
+mkdir -p "$reg_dir"; touch "$reg"
+
+port_for_root() {
+  p=$(awk -F'\t' -v r="$root" '$2 == r {print $1; exit}' "$reg")
+  if [ -n "$p" ]; then echo "$p"; return; fi
+  # Drop entries whose worktree no longer exists, then take the lowest free port.
+  tmp="$reg.$$"
+  while IFS="$(printf '\t')" read -r pp rr; do [ -d "$rr" ] && printf '%s\t%s\n' "$pp" "$rr"; done < "$reg" > "$tmp"
+  mv "$tmp" "$reg"
+  p=8081
+  while awk -F'\t' -v p="$p" '$1 == p {f=1} END {exit !f}' "$reg" \
+        || lsof -nP -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1; do
+    p=$((p + 1))
+  done
+  printf '%s\t%s\n' "$p" "$root" >> "$reg"
+  echo "$p"
+}
+
+running() { hc get "$name" 2>/dev/null | jq -e '.state == "live"' >/dev/null 2>&1; }
+
+case "$cmd" in
+  port) port_for_root ;;
+  name) echo "$name" ;;
+  start)
+    port=$(port_for_root)
+    if running; then
+      echo "herdr-expo: Metro already running for $(basename "$root") on port $port (terminal $name)."
+    else
+      hc rm "$name" >/dev/null 2>&1
+      if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+        echo "herdr-expo: port $port is taken by another process:" >&2
+        lsof -nP -iTCP:"$port" -sTCP:LISTEN >&2
+        exit 1
+      fi
+      # A login+interactive shell so nvm's node is on PATH. RCT_METRO_PORT makes
+      # native builds started later from this worktree default to the same port.
+      hc run --bg --name "$name" --cwd "$app" -- \
+        "${SHELL:-/bin/zsh}" -lic "printf '\\033]0;Expo\\007'; export RCT_METRO_PORT=$port; exec npx expo start --port $port" >/dev/null \
+        || { echo "herdr-expo: hc run failed." >&2; exit 1; }
+      echo "herdr-expo: started Metro for $(basename "$root") on port $port (terminal $name)."
+    fi
+    scheme=$(jq -r '.expo.scheme // empty | if type == "array" then .[0] else . end' "$app/app.json" 2>/dev/null)
+    echo "  logs:          hc read $name     (pane: herdr-expo logs)"
+    echo "  build+install: npx expo run:ios --port $port --no-bundler   (android: run:android)"
+    [ -n "$scheme" ] && echo "  open dev build: xcrun simctl openurl booted '$scheme://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A$port'" \
+      && echo "                  adb reverse tcp:$port tcp:$port && adb shell am start -a android.intent.action.VIEW -d '$scheme://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A$port'"
+    ;;
+  logs) running || { echo "herdr-expo: Metro isn't running here; herdr-expo start first." >&2; exit 1; }
+        exec herdr-logs "${2:-toggle}" "$name" ;;
+  read) exec hc read "$name" ;;
+  stop)
+    running && hc kill "$name" >/dev/null
+    hc rm "$name" >/dev/null 2>&1
+    [ -n "${HC_TERMINAL_ID:-}" ] && herdr-logs hide "$name" >/dev/null 2>&1
+    echo "herdr-expo: stopped $name." ;;
+  *) echo "usage: herdr-expo start|port|name|logs [show|hide|toggle]|read|stop" >&2; exit 2 ;;
+esac

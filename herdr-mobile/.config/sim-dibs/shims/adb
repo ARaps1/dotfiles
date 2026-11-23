@@ -1,0 +1,37 @@
+#!/bin/bash
+# adb through sim-dibs: with no -s / ANDROID_SERIAL, runs on this terminal's leased
+# emulator (claiming or booting one); with an emulator serial, checks it is ours.
+# Server and listing commands (devices, version, start-server, ...) pass through.
+. "$(dirname "${BASH_SOURCE[0]}")/_lib.sh"
+real=$(real_tool adb "$SDK/platform-tools/adb")
+[ -n "$real" ] || { echo "sim-dibs shim: adb not found (Android SDK platform-tools)." >&2; exit 127; }
+[ -n "${SIM_DIBS_BYPASS:-}" ] && exec "$real" "$@"
+
+serial="${ANDROID_SERIAL:-}" usb=0 sub="" args=("$@") i=0
+while [ $i -lt ${#args[@]} ]; do
+  case "${args[$i]}" in
+    -s) serial="${args[$((i + 1))]:-}"; i=$((i + 2)) ;;
+    -t|-H|-P|-L) i=$((i + 2)) ;;
+    -d) usb=1; i=$((i + 1)) ;;
+    -*) i=$((i + 1)) ;;
+    *) sub="${args[$i]}"; break ;;
+  esac
+done
+
+case "$sub" in
+  ""|devices|version|help|start-server|kill-server|reconnect|connect|disconnect|pair|mdns|keygen|host-features|track-devices|server-status|wait-for-*)
+    exec "$real" "$@" ;;
+esac
+[ "$usb" = 1 ] && exec "$real" "$@"
+
+if [ -n "$serial" ]; then
+  case "$serial" in
+    emulator-*)
+      avd=$("$real" -s "$serial" emu avd name 2>/dev/null | head -1 | tr -d '\r')
+      [ -n "$avd" ] && lease "avd:$avd" >/dev/null ;;
+  esac
+  exec "$real" "$@"
+fi
+
+serial=$(lease android) || exit 3
+ANDROID_SERIAL="$serial" exec "$real" "$@"
