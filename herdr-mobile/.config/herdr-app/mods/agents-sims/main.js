@@ -6,8 +6,7 @@ import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, exec, home, appHome, checking, watchFolder } from "herdr";
 
-// sim-dibs frees a dib after 30 minutes without simulator commands (SIM_DIBS_STALE_MIN).
-const SIM_STALE_MS = 30 * 60000;
+// Leases come from `sim-dibs leases --json` (probe.sh), already judged valid by sim-dibs.
 const simIcon = (d) => `mods/herdr-sim/icons/${d.platform === "android" ? "android" : "apple"}.svg`;
 
 function find(node, id) {
@@ -129,15 +128,11 @@ export default class Agents extends View {
     });
   }
 
-  // Valid dibs by holder address, the way sim-dibs judges them: the holder's terminal
-  // is live and it drove a simulator in the last 30 minutes.
+  // Leases by holder address. sim-dibs only reports valid ones.
   simHolders(all, now) {
-    const live = new Set(all.filter((k) => k.state === "live").map((k) => k.address));
     const running = new Set(this.sims.running.map((d) => d.id));
     const by = new Map();
     for (const d of this.sims.dibs) {
-      // A wt: holder (the herdr-sim pane, or outside Herdr) has no session: only staleness frees it.
-      if ((!live.has(d.holder) && !d.holder.startsWith("wt:")) || now - d.updated_ms > SIM_STALE_MS) continue;
       const dib = { ...d, booted: running.has(d.id) };
       by.set(d.holder, [...(by.get(d.holder) ?? []), dib]);
     }
@@ -165,6 +160,14 @@ export default class Agents extends View {
       .child(svg(simIcon(d)).size(13).mr(7).flex_none().text_color(d.booted ? t.accent : t.dim))
       .child(div().flex_1().truncate().text_color(t.muted).child(d.name))
       .child(div().flex_none().text_size(11).text_color(t.dim).child(d.booted ? (ago < 60000 ? "now" : duration(ago)) : "booting"));
+  }
+
+  // "Shuts down in 7m" for a running device nobody holds (sim-dibs reap), else null.
+  offIn(d, now) {
+    const idle = this.sims.idle_ms ?? 0;
+    if (!idle || !d.unheld_since_ms) return null;
+    const left = Math.max(0, d.unheld_since_ms + idle - now);
+    return `Shuts down in ${left < 60000 ? "under a minute" : duration(left)}`;
   }
 
   // Every running device and every valid dib, with who holds it; free ones say so.
@@ -206,11 +209,11 @@ export default class Agents extends View {
           .text_size(12.5)
           .when(Boolean(h), (el) => el.cursor_pointer().hover((s) => s.bg(t.hover))
             .on_click(() => (this.listed.has(h) ? run("pane.focus", { terminal: h }) : this.peek(h))))
-          .tooltip(h ? `${d.name} [${d.id}]\nHeld by ${h}, last used ${duration(now - d.dib.updated_ms)} ago\n${d.dib.worktree}` : `${d.name} [${d.id}]\nNobody holds it: sim-dibs claim takes it`)
+          .tooltip(h ? `${d.name} [${d.id}]\nHeld by ${h}, last used ${duration(now - d.dib.updated_ms)} ago\n${d.dib.worktree}` : `${d.name} [${d.id}]\nNobody holds it: sim-dibs claim takes it. ${this.offIn(d, now) ?? "Shuts down when unheld for a while"}.`)
           .child(svg(simIcon(d)).size(13).flex_none().text_color(h ? t.accent : t.dim))
           .child(div().flex_1().min_w(0).truncate().text_color(h ? t.foreground : t.muted).child(d.name))
           .child(div().flex_none().max_w(120).truncate().text_right().text_size(11.5).text_color(h ? t.muted : t.dim)
-            .child(h ? (d.booted === false ? `${who(h)} · booting` : who(h)) : "free"));
+            .child(h ? (d.booted === false ? `${who(h)} · booting` : who(h)) : (this.offIn(d, now) ? `free · ${this.offIn(d, now).replace("Shuts down in ", "off in ")}` : "free")));
       }));
   }
 

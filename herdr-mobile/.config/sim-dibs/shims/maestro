@@ -1,0 +1,31 @@
+#!/bin/bash
+# maestro through sim-dibs: without --device/--udid, runs on this terminal's leased
+# device (the --platform one, else the only one it holds); a named device must be
+# ours. list-devices, cloud and help pass through.
+. "$(dirname "${BASH_SOURCE[0]}")/_lib.sh"
+real=$(real_tool maestro)
+[ -n "$real" ] || { echo "sim-dibs shim: maestro not found." >&2; exit 127; }
+[ -n "${SIM_DIBS_BYPASS:-}" ] && exec "$real" "$@"
+
+device="" platform="" cmd="" prev=""
+for a in "$@"; do
+  case "$prev" in --device|--udid) device="$a" ;; -p|--platform) platform="$a" ;; esac
+  case "$a" in
+    --device=*|--udid=*) device="${a#*=}" ;;
+    -p=*|--platform=*) platform="${a#*=}" ;;
+    -*) ;;
+    *) case "$prev" in --device|--udid|-p|--platform) ;; *) [ -n "$cmd" ] || cmd="$a" ;; esac ;;
+  esac
+  prev="$a"
+done
+case "$cmd" in ""|list-devices|list-cloud-devices|cloud|login|logout|download-samples|bugreport|mcp|chat) exec "$real" "$@" ;; esac
+
+if [ -n "$device" ]; then
+  IFS=, read -ra ids <<< "$device"
+  for d in "${ids[@]}"; do check_target "$d"; done
+  exec "$real" "$@"
+fi
+t=$(target_for "$(printf '%s' "$platform" | tr 'A-Z' 'a-z')"); rc=$?
+[ $rc = 3 ] && exit 3
+[ $rc = 0 ] || exec "$real" "$@"
+exec "$real" --device="${t#* }" "$@"

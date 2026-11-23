@@ -450,6 +450,28 @@ herdr_mobile_setup() {
         echo "Go not found; skipping avdslim (Android emulators boot stock). 'brew install go' and re-run to add it."
     fi
 
+    # sim-dibs reap every minute, outside any agent or the Herdr window: ends leases
+    # whose terminal is gone and shuts down devices nobody has held for 10 minutes.
+    local label="local.sim-dibs.reap" plist="$HOME/Library/LaunchAgents/local.sim-dibs.reap.plist"
+    mkdir -p "$HOME/Library/LaunchAgents" "$HOME/.local/state/sim-dibs"
+    cat > "$plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$label</string>
+  <key>ProgramArguments</key><array><string>$HOME/.local/bin/sim-dibs</string><string>reap</string></array>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
+  <key>WorkingDirectory</key><string>$HOME</string>
+  <key>StartInterval</key><integer>60</integer>
+  <key>RunAtLoad</key><true/>
+  <key>StandardErrorPath</key><string>$HOME/.local/state/sim-dibs/reap.err</string>
+</dict>
+</plist>
+PLIST
+    launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+    launchctl bootstrap "gui/$(id -u)" "$plist" && echo "  → launchd runs 'sim-dibs reap' every minute ($label)"
+
     # simslim slims iOS simulators.
     if ! command -v simslim >/dev/null 2>&1 && command -v brew >/dev/null 2>&1; then
         brew install mobai-app/tap/simslim || echo "Could not install simslim; iOS simulators boot stock."
@@ -457,9 +479,8 @@ herdr_mobile_setup() {
 
     echo "Herdr mobile setup complete!"
     echo "  → Restart Herdr to load the herdr-sim, herdr-sim-screen and agents-sims mods"
-    echo "  → Claude Code hooks for sim-dibs live in ~/.claude/settings.json (not managed here):"
-    echo "      PreToolUse  (Bash):  $HOME/.local/bin/sim-dibs hook"
-    echo "      SessionEnd:          $HOME/.local/bin/sim-dibs release --all"
+    echo "  → New shells put ~/.config/sim-dibs/shims first on PATH (zsh/sim-dibs.zsh): adb, xcrun simctl,"
+    echo "    emulator, maestro and agent-device lease a device per Herdr terminal. Restart agent sessions."
 }
 
 # Function for tmux

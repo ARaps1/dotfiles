@@ -1,6 +1,6 @@
 #!/bin/bash
-# sim-dibs: who may drive which iOS simulator / Android emulator, across Claude
-# sessions and worktrees. At most SIM_DIBS_MAX (default 5) devices run at once.
+# sim-dibs: leases on iOS simulators and Android emulators for Herdr terminals
+# (any agent or shell). At most SIM_DIBS_MAX (default 5) devices run at once.
 #
 #   sim-dibs claim <ios|android|<udid>|avd:<name>>
 #        Get a device: one you already hold, else a running free one, else boot one
@@ -11,18 +11,35 @@
 #   sim-dibs status                 who holds what, from which worktree, active how recently
 #   sim-dibs mine                   the device ids you hold
 #   sim-dibs profiles               the slim profiles a boot from here would use
+#   sim-dibs device <ios|android|<udid>|avd:<name>>
+#        Like claim, but prints the address tools take (UDID, or emulator-NNNN) and
+#        skips the pane. Fast when you already hold one. The PATH shims use it.
+#   sim-dibs leases --json          valid leases and running devices (Herdr sidebar)
+#   sim-dibs reap                   end dead leases; shut down devices unheld for
+#                                   SIM_DIBS_IDLE_MIN (default 10, 0 = never). launchd
+#                                   runs it every minute (dotfiles herdr-mobile).
 #   sim-dibs ask <id> [message]     message the holder's session (hc send)
 #   sim-dibs take <id> --reason "<why it's stuck>"
 #        Take over a held device that's stuck. The holder's session is told.
 #   sim-dibs hook                   PreToolUse hook (reads the tool call JSON on stdin)
 #
-# A dib is free again when its session ended, or after SIM_DIBS_STALE_MIN
-# (default 30) minutes without simulator commands from it. Holder = the Herdr
-# terminal ($HC_TERMINAL_ID), or the worktree outside Herdr.
+# Holder = the Herdr terminal ($HC_TERMINAL_ID), or the worktree outside Herdr. A
+# lease lasts while that terminal is live and runs a program (any agent). It ends
+# when the terminal goes away. When the terminal is back at a bare shell, or the
+# holder is outside Herdr, it ends after SIM_DIBS_STALE_MIN (default 30) minutes
+# without simulator commands.
 
 set -u
 MAX="${SIM_DIBS_MAX:-5}"
 STALE_MS=$(( ${SIM_DIBS_STALE_MIN:-30} * 60000 ))
+IDLE_MS=$(( ${SIM_DIBS_IDLE_MIN:-10} * 60000 ))
+XCRUN=/usr/bin/xcrun
+# Run from launchd or a Herdr mod, PATH can lack ~/.local/bin (hc) and Homebrew (jq).
+for p in "$HOME/.local/bin" /opt/homebrew/bin /usr/local/bin; do
+  case ":$PATH:" in *":$p:"*) ;; *) [ -d "$p" ] && PATH="$PATH:$p" ;; esac
+done
+# Our own adb/simctl calls, and anything we start (avdslim, simslim), skip the shims.
+export SIM_DIBS_BYPASS=1
 DIR="${XDG_STATE_HOME:-$HOME/.local/state}/sim-dibs"
 mkdir -p "$DIR"
 SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Library/Android/sdk}}"
@@ -54,21 +71,33 @@ lock() {
 dib_file() { printf '%s/%s.json' "$DIR" "$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"; }
 dib_get() { local f; f=$(dib_file "$1"); [ -f "$f" ] && jq -r ".$2 // empty" "$f"; }
 
-holder_alive() {
-  local h="$1"
+# Is the lease in dib file $1 still valid? See the header for the rule.
+lease_valid() {
+  local f="$1" h upd fg
+  h=$(jq -r .holder "$f" 2>/dev/null) || return 1
+  upd=$(jq -r .updated_ms "$f")
   case "$h" in
-    wt:*) return 0 ;; # no session to check outside Herdr; staleness decides
-    *) hc get "$h" 2>/dev/null | jq -e '.state == "live" and ((.foreground.argv[0] // "") | test("claude"))' >/dev/null 2>&1 ;;
+    wt:*) fg="" ;;
+    *) fg=$(hc get "$h" 2>/dev/null | jq -r 'if .state == "live" then ((.foreground.argv[0] // "") | split("/") | last | ltrimstr("-")) else "@gone" end' 2>/dev/null) || fg="@gone"
+       [ -n "$fg" ] || fg="@gone" ;;
+  esac
+  case "$fg" in
+    @gone) return 1 ;;
+    ""|zsh|bash|sh|fish|dash|login) [ $(( $(now_ms) - upd )) -le "$STALE_MS" ] ;;
+    *) return 0 ;;
   esac
 }
+holder_alive() { # for messages: is there a live Herdr session to talk to?
+  case "$1" in wt:*) return 1 ;; esac
+  hc get "$1" 2>/dev/null | jq -e '.state == "live"' >/dev/null 2>&1
+}
 
-# Is the dib on $1 held by someone else, still valid?
+# Is the dib on $1 held by someone else, still valid? Drops it if not.
 held_by_other() {
-  local f h upd; f=$(dib_file "$1"); [ -f "$f" ] || return 1
+  local f h; f=$(dib_file "$1"); [ -f "$f" ] || return 1
   h=$(jq -r .holder "$f"); [ "$h" = "$me" ] && return 1
-  upd=$(jq -r .updated_ms "$f")
-  if ! holder_alive "$h" || [ $(( $(now_ms) - upd )) -gt "$STALE_MS" ]; then rm -f "$f"; return 1; fi
-  return 0
+  lease_valid "$f" && return 0
+  rm -f "$f"; return 1
 }
 
 write_dib() { # id platform name
@@ -80,7 +109,7 @@ write_dib() { # id platform name
 
 # Devices: "<id>\t<platform>\t<booted 0|1>\t<name>" lines.
 list_devices() {
-  xcrun simctl list devices available -j 2>/dev/null | jq -r '
+  "$XCRUN" simctl list devices available -j 2>/dev/null | jq -r '
     .devices | to_entries[] | select(.key | test("SimRuntime.iOS")) |
     (.key | capture("iOS-(?<a>[0-9]+)-(?<b>[0-9]+)") | "\(.a).\(.b)") as $os |
     .value[] | [.udid, "ios", (if .state == "Booted" then 1 else 0 end), "\(.name) (iOS \($os))", $os] | @tsv' |
@@ -102,8 +131,8 @@ list_devices() {
 
 boot() { # id platform
   if [ "$2" = ios ]; then
-    xcrun simctl boot "$1" 2>/dev/null; open -ga Simulator 2>/dev/null || true
-    xcrun simctl bootstatus "$1" >/dev/null 2>&1
+    "$XCRUN" simctl boot "$1" 2>/dev/null; open -ga Simulator 2>/dev/null || true
+    "$XCRUN" simctl bootstatus "$1" >/dev/null 2>&1
   else
     boot_android "${1#avd:}" && return 0
     nohup "$EMULATOR" -avd "${1#avd:}" -no-window -no-audio >/dev/null 2>&1 &
@@ -139,13 +168,13 @@ slim() { # id platform
   [ "$2" = ios ] && [ "${SIM_DIBS_SLIM:-1}" != 0 ] && [ -n "$profile" ] || return 0
   command -v simslim >/dev/null || return 0
   simslim verify "$1" --profile "$profile" >/dev/null 2>&1 && return 0
-  echo "sim-dibs: slimming $1 with $profile…" >&2
+  echo "sim-dibs: slimming $1 with ${profile}…" >&2
   simslim on "$1" --profile "$profile" >/dev/null 2>&1 ||
     simslim on "$1" --profile "$profile" --no-reboot >/dev/null 2>&1 ||
     echo "sim-dibs: simslim could not slim $1; it runs stock." >&2
 }
 shutdown_dev() { # id platform
-  if [ "$2" = ios ]; then xcrun simctl shutdown "$1" 2>/dev/null
+  if [ "$2" = ios ]; then "$XCRUN" simctl shutdown "$1" 2>/dev/null
   else
     local s; for s in $("$ADB" devices | awk '/^emulator-/ {print $1}'); do
       [ "$("$ADB" -s "$s" emu avd name 2>/dev/null | head -1 | tr -d '\r')" = "${1#avd:}" ] && "$ADB" -s "$s" emu kill >/dev/null 2>&1
@@ -236,7 +265,8 @@ claim() {
   write_dib "$id" "$plat" "$name"
   rmdir "$DIR/.lock" 2>/dev/null; trap - EXIT
   slim "$id" "$plat"
-  command -v herdr-sim-pane >/dev/null && herdr-sim-pane "$id" >/dev/null 2>&1
+  [ -n "${SIM_DIBS_NO_PANE:-}" ] || { command -v herdr-sim-pane >/dev/null && herdr-sim-pane "$id" >/dev/null 2>&1; }
+  rm -f "$DIR/idle/$(basename "$(dib_file "$id")")"
   echo "sim-dibs: you hold $name [$id]." >&2
   echo "$id"
 }
@@ -249,7 +279,9 @@ release() {
     [ "$which" = --all ] || [ "$(jq -r .id "$f")" = "$which" ] || continue
     rm -f "$f"; n=$((n + 1))
   done
-  [ $n -gt 0 ] && command -v herdr-sim-pane >/dev/null && [ -z "$(cmd_mine)" ] && herdr-sim-pane --close >/dev/null 2>&1
+  # Close this session's simulator pane once it holds nothing (not for wt: holders,
+  # such as the pane itself, which have no session pane).
+  [ $n -gt 0 ] && [[ "$me" != wt:* ]] && command -v herdr-sim-pane >/dev/null && [ -z "$(cmd_mine)" ] && herdr-sim-pane --close >/dev/null 2>&1
   echo "sim-dibs: released $n."
 }
 
@@ -263,7 +295,7 @@ status() {
   for f in "$DIR"/*.json; do
     [ -f "$f" ] || continue
     h=$(jq -r .holder "$f")
-    if holder_alive "$h"; then st=$(hc get "$h" 2>/dev/null | jq -r '.status.state // "?"'); else st="ended (free)"; fi
+    if ! lease_valid "$f"; then st="ended (free)"; elif holder_alive "$h"; then st=$(hc get "$h" 2>/dev/null | jq -r '.status.state // "?"'); else st="no session"; fi
     jq -r --arg st "$st" --argjson t "$t" --arg me "$me" \
       '"  \(.name) [\(.id)]: \(.holder)\(if .holder == $me then " (you)" else "" end), \(.worktree | split("/") | last), \($st), last used \((($t - .updated_ms) / 60000) | floor)m ago"' "$f"
   done
@@ -293,6 +325,65 @@ take() {
   fi
   command -v herdr-sim-pane >/dev/null && herdr-sim-pane "$id" >/dev/null 2>&1
   echo "sim-dibs: you took over $name [$id]."
+}
+
+# emulator-NNNN for a running AVD id (avd:<name>), or nothing.
+serial_for() {
+  local s; for s in $("$ADB" devices 2>/dev/null | awk '/^emulator-.*device$/ {print $1}'); do
+    [ "avd:$("$ADB" -s "$s" emu avd name 2>/dev/null | head -1 | tr -d '\r')" = "$1" ] && { echo "$s"; return; }
+  done
+}
+address_for() { # id -> what tools take
+  case "$1" in avd:*) serial_for "$1" ;; *) echo "$1" ;; esac
+}
+
+# The device for a tool call: one I hold (fast), else claim. Prints its address.
+device() {
+  local want="$1" f id plat addr
+  for f in "$DIR"/*.json; do
+    [ -f "$f" ] && [ "$(jq -r .holder "$f")" = "$me" ] || continue
+    id=$(jq -r .id "$f"); plat=$(jq -r .platform "$f")
+    case "$want" in ios|android) [ "$plat" = "$want" ] || continue ;; *) [ "$id" = "$want" ] || continue ;; esac
+    addr=$(address_for "$id")
+    if [ -n "$addr" ]; then write_dib "$id" "$plat" "$(jq -r .name "$f")"; echo "$addr"; return 0; fi
+  done
+  id=$(SIM_DIBS_NO_PANE=1 claim "$want") || exit $?
+  addr=$(address_for "$id")
+  [ -n "$addr" ] || { echo "sim-dibs: $id is not reachable yet." >&2; exit 1; }
+  echo "$addr"
+}
+
+# Valid leases and running devices, as JSON, for the Herdr sidebar.
+leases_json() {
+  local f t; t=$(now_ms)
+  local dibs; dibs=$(for f in "$DIR"/*.json; do [ -f "$f" ] && lease_valid "$f" && jq -c . "$f"; done | jq -sc .)
+  local running; running=$(list_devices | awk -F'\t' '$3 == 1' | while IFS=$'\t' read -r id plat b name; do
+    local since; since=$(cat "$DIR/idle/$(basename "$(dib_file "$id")")" 2>/dev/null || true)
+    jq -nc --arg id "$id" --arg p "$plat" --arg n "$name" --arg s "$(address_for "$id")" --arg u "$since" \
+      '{id:$id, platform:$p, name:$n, serial:$s} + (if $u == "" then {} else {unheld_since_ms: ($u | tonumber)} end)'
+  done | jq -sc .)
+  jq -nc --argjson d "${dibs:-[]}" --argjson r "${running:-[]}" --argjson m "$MAX" --argjson i "$IDLE_MS" \
+    '{dibs:$d, running:$r, max:$m, idle_ms:$i}'
+}
+
+# End dead leases; shut down a running device nobody has held for IDLE_MS.
+reap() {
+  local f t id plat b name m since
+  t=$(now_ms); mkdir -p "$DIR/idle"
+  lock
+  for f in "$DIR"/*.json; do [ -f "$f" ] && ! lease_valid "$f" && rm -f "$f"; done
+  while IFS=$'\t' read -r id plat b name; do
+    [ -n "$id" ] || continue
+    m="$DIR/idle/$(basename "$(dib_file "$id")")"
+    if [ "$b" != 1 ] || [ -f "$(dib_file "$id")" ]; then rm -f "$m"; continue; fi
+    [ -f "$m" ] || { echo "$t" > "$m"; continue; }
+    since=$(cat "$m")
+    if [ "$IDLE_MS" -gt 0 ] && [ $(( t - since )) -ge "$IDLE_MS" ]; then
+      echo "$(date '+%F %T') shutting down $name [$id], unheld for $(( (t - since) / 60000 ))m" >> "$DIR/reap.log"
+      shutdown_dev "$id" "$plat"; rm -f "$m"
+    fi
+  done <<< "$(list_devices)"
+  rmdir "$DIR/.lock" 2>/dev/null; trap - EXIT
 }
 
 # PreToolUse hook: claim before simulator commands; block when none is free.
@@ -326,9 +417,12 @@ case "${1:-status}" in
   release) release "${2:---all}" ;;
   status) status ;;
   mine) cmd_mine ;;
+  device) [ -n "${2:-}" ] || { echo "usage: sim-dibs device <ios|android|udid|avd:name>" >&2; exit 2; }; device "$2" ;;
+  leases) leases_json ;;
+  reap) reap ;;
   profiles) for n in simslim.json avdslim.json; do printf '%s: %s\n' "$n" "$(profile_for "$n" || true)"; done ;;
   ask) [ -n "${2:-}" ] || exit 2; id=$2; shift 2; ask "$id" "$@" ;;
   take) [ -n "${2:-}" ] || exit 2; id=$2; shift 2; take "$id" "$@" ;;
   hook) hook ;;
-  *) sed -n '2,24p' "$0"; exit 2 ;;
+  *) sed -n '2,32p' "$0"; exit 2 ;;
 esac

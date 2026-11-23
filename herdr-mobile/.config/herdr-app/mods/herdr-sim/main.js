@@ -256,9 +256,15 @@ export default class Simulator extends View {
 
   async close() {
     this.closed = true;
+    const shown = this.target()?.id;
     panes.delete(this.view);
     this.socket?.close();
     await this.release();
+    // Give back the pane's own lease on the device it showed (never an agent's), so
+    // sim-dibs reap can shut it down once nobody holds it.
+    if (shown) {
+      await exec("/bin/bash", ["-c", 'HC_TERMINAL_ID=wt:herdr-sim-pane exec "$HOME/.local/bin/sim-dibs" release "$1"', "sh", shown]).catch(() => {});
+    }
   }
 
   async release(kill = false) {

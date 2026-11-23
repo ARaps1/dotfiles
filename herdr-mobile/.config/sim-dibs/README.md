@@ -1,4 +1,13 @@
-# sim-dibs slim profiles
+# sim-dibs
+
+Leases on iOS simulators and Android emulators for Herdr terminals, at most 5 running at once (`SIM_DIBS_MAX`).
+
+- **Lease:** held by a Herdr terminal (`$HC_TERMINAL_ID`). It lasts while that terminal runs a program (any agent: Claude Code, Codex, Cursor, pi, or a command a person runs) and ends when the terminal goes away. When the terminal is back at a bare shell, or the holder is outside Herdr, it ends after 30 minutes without simulator commands (`SIM_DIBS_STALE_MIN`).
+- **Shims** (`shims/`, first on `PATH` via `zsh/sim-dibs.zsh`): `adb`, `xcrun simctl`, `emulator`, `maestro` and `agent-device` lease a device for the calling terminal and point the real tool at it. They refuse a device another terminal holds (exit 3) and refuse `simctl shutdown|erase|delete all`. Listing and server commands pass through. `SIM_DIBS_BYPASS=1` skips them.
+- **Reaper:** `sim-dibs reap`, run every minute by launchd (`local.sim-dibs.reap`, installed by `setup.sh herdr-mobile`). It ends leases whose terminal is gone and shuts down a device nobody has held for 10 minutes (`SIM_DIBS_IDLE_MIN`, 0 = never). Shutdowns are logged to `~/.local/state/sim-dibs/reap.log`.
+- **Herdr:** the agents-sims sidebar shows `sim-dibs leases --json`, including when a free device will shut down. The herdr-sim pane boots through `sim-dibs claim`, and closing the pane releases the pane's own lease.
+
+## Slim profiles
 
 `sim-dibs` slims every simulator it boots. A repo can ship its own `simslim.json` or `avdslim.json` at its git root, and that one wins (fitness-app ships a generated `simslim.json`). Otherwise `sim-dibs` uses the defaults here. `SIM_DIBS_SLIM=0` boots stock.
 
