@@ -22,6 +22,9 @@ show_help() {
     echo "  minuet            - Install LiteLLM->Bedrock proxy for minuet AI autocomplete"
     echo "  lazygit           - Install lazygit terminal UI for git"
     echo "  ghostty           - Symlink Ghostty terminal config (run on macOS host)"
+    echo "  herdr             - Symlink Herdr settings and keybindings (macOS host)"
+    echo "  herdr-mobile      - Herdr mods and scripts for iOS/Android simulators (opt-in,"
+    echo "                      personal machine only; never part of 'all')"
     echo "  nerd-font         - Install Hack Nerd Font"
     echo "  all               - Run all setup commands"
     echo "  help              - Show this help message"
@@ -372,6 +375,93 @@ ghostty_setup() {
     echo "Ghostty config symlinked. Reload Ghostty (Cmd+Shift+,) or restart it to apply."
 }
 
+# Herdr (desktop app for agent terminals) keeps its home in ~/.config/herdr-app,
+# next to runtime state (data/, telemetry/, view.json) and the stock mods it
+# installs itself. Only our own files and mods are linked, never the whole folder.
+herdr_require() {
+    if [ "$(uname -s)" != "Darwin" ]; then
+        echo "Herdr is a macOS app; skipping $1."
+        return 1
+    fi
+    if [ ! -d "/Applications/Herdr.app" ]; then
+        echo "Herdr is not installed. Install Herdr.app, open it once, then re-run: $0 $1"
+        return 1
+    fi
+    if [ ! -f "$HOME/.config/herdr-app/installed.json" ]; then
+        echo "Herdr has not run yet. Open it once so it installs its stock mods, then re-run: $0 $1"
+        return 1
+    fi
+}
+
+# Settings and keybindings only: safe on any machine (work or personal).
+# Herdr recreates settings.json and keys.json the moment they disappear, so stow's
+# remove-then-link fails. Each file is swapped for its symlink with one rename
+# instead; a file that was already there is kept as <name>.bak.
+herdr_setup() {
+    echo "Setting up Herdr config..."
+    herdr_require herdr || return 0
+    local home="$HOME/.config/herdr-app" f src
+    for src in "$SCRIPT_DIR"/herdr/.config/herdr-app/*; do
+        f=$(basename "$src")
+        if [ -L "$home/$f" ] && [ "$(readlink -f "$home/$f")" = "$(readlink -f "$src")" ]; then
+            echo "  $f already linked"
+            continue
+        fi
+        [ -f "$home/$f" ] && [ ! -L "$home/$f" ] && cp -p "$home/$f" "$home/$f.bak"
+        ln -sfn "$src" "$home/.$f.link"
+        mv -f "$home/.$f.link" "$home/$f"
+        echo "  Linked $f"
+    done
+    echo "Herdr config symlinked. Restart Herdr to pick up settings and keybindings."
+}
+
+# Mobile development add-ons (personal machine only): the simulator pane
+# (herdr-sim, herdr-sim-screen), the agents+simulators sidebar (agents-sims) and its
+# layout, plus the scripts agents use: sim-dibs (who drives which simulator;
+# boots Android through avdslim), herdr-sim-pane, herdr-expo, herdr-supabase and the
+# logs panes. Never run from 'all', so a web-only work machine never gets them.
+herdr_mobile_setup() {
+    echo "Setting up Herdr mobile (simulator) add-ons..."
+    herdr_require herdr-mobile || return 0
+    herdr_setup
+
+    if command -v brew >/dev/null 2>&1; then
+        command -v jq >/dev/null 2>&1 || brew install jq
+    fi
+    # Each mod is linked as a whole folder (Herdr refuses a mod whose imported files
+    # are symlinks that resolve outside its folder). mods/, layouts/ and ~/.local/bin
+    # already exist, so stow links the mod folders and the single files under them.
+    mkdir -p "$HOME/.local/bin"
+    create_symlinks "herdr-mobile"
+
+    # avdslim slims Android emulators. Built from source at a reviewed tag instead of
+    # the release binary or install script. sim-dibs falls back to stock boots without it.
+    local avdslim_tag="v1.0.17"
+    if command -v avdslim >/dev/null 2>&1; then
+        echo "avdslim is already installed ($(avdslim version 2>/dev/null))"
+    elif command -v go >/dev/null 2>&1; then
+        echo "Building avdslim $avdslim_tag from source..."
+        local tmp
+        tmp=$(mktemp -d)
+        git clone -q --depth 1 --branch "$avdslim_tag" https://github.com/kdbhalala/avdslim "$tmp/avdslim"
+        (cd "$tmp/avdslim" && CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=$avdslim_tag" -o "$HOME/.local/bin/avdslim" ./cmd/avdslim)
+        rm -rf "$tmp"
+    else
+        echo "Go not found; skipping avdslim (Android emulators boot stock). 'brew install go' and re-run to add it."
+    fi
+
+    # simslim slims iOS simulators.
+    if ! command -v simslim >/dev/null 2>&1 && command -v brew >/dev/null 2>&1; then
+        brew install mobai-app/tap/simslim || echo "Could not install simslim; iOS simulators boot stock."
+    fi
+
+    echo "Herdr mobile setup complete!"
+    echo "  → Restart Herdr to load the herdr-sim, herdr-sim-screen and agents-sims mods"
+    echo "  → Claude Code hooks for sim-dibs live in ~/.claude/settings.json (not managed here):"
+    echo "      PreToolUse  (Bash):  $HOME/.local/bin/sim-dibs hook"
+    echo "      SessionEnd:          $HOME/.local/bin/sim-dibs release --all"
+}
+
 # Function for tmux
 tmux_setup() {
     echo "Setting up tmux..."
@@ -541,6 +631,7 @@ all_setup() {
     minuet_setup
     lazygit_setup
     ghostty_setup
+    herdr_setup
     nerd_font_setup
 }
 
@@ -569,6 +660,12 @@ case "$1" in
         ;;
     ghostty)
         ghostty_setup
+        ;;
+    herdr)
+        herdr_setup
+        ;;
+    herdr-mobile)
+        herdr_mobile_setup
         ;;
     nerd-font)
         nerd_font_setup

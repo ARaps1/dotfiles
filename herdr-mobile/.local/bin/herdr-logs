@@ -1,0 +1,77 @@
+#!/bin/sh
+# herdr-logs: show or hide a logs terminal as a pane to the right of the
+# simulator pane (or of the calling session when there's no simulator pane).
+#
+#   herdr-logs toggle <terminal>   show it if hidden, hide it if shown
+#   herdr-logs show <terminal>
+#   herdr-logs hide <terminal>
+#
+# <terminal> is an hc terminal name or address (expo-<worktree>, supabase-logs-<project>).
+# The pane is only a viewer (`hc attach`): hiding it leaves the program running, and
+# `hc read <terminal>` reads the logs either way. Outside Herdr it does nothing.
+
+set -u
+action="${1:-}" name="${2:-}"
+case "$action" in show|hide|toggle) ;; *) echo "usage: herdr-logs show|hide|toggle <terminal>" >&2; exit 2;; esac
+[ -n "$name" ] || { echo "usage: herdr-logs $action <terminal>" >&2; exit 2; }
+
+if [ -z "${HC_TERMINAL_ID:-}" ] || ! command -v herdr-app >/dev/null 2>&1; then
+  echo "herdr-logs: not running inside Herdr; read the logs with: hc read $name" >&2
+  exit 0
+fi
+
+state_root="${XDG_STATE_HOME:-$HOME/.local/state}"
+dir="$state_root/herdr-logs/$HC_TERMINAL_ID"
+mkdir -p "$dir"
+state="$dir/$name"
+
+pane_exists() {
+  [ -n "$1" ] && herdr-app do pane.swap "{\"pane\":\"$1\",\"target\":\"$1\"}" 2>&1 | grep -q "pane itself"
+}
+
+viewer=""
+[ -f "$state" ] && viewer=$(cat "$state")
+pane_exists "$viewer" || { viewer=""; rm -f "$state"; }
+
+if [ "$action" = toggle ]; then
+  [ -n "$viewer" ] && action=hide || action=show
+fi
+
+if [ "$action" = hide ]; then
+  [ -n "$viewer" ] && herdr-app do pane.close "{\"pane\":\"$viewer\"}" >/dev/null
+  rm -f "$state"
+  echo "herdr-logs: $name hidden (still running; hc read $name)."
+  exit 0
+fi
+
+if [ -n "$viewer" ]; then
+  echo "herdr-logs: $name already shown ($viewer)."
+  exit 0
+fi
+
+hc get "$name" >/dev/null 2>&1 || { echo "herdr-logs: no live terminal named $name." >&2; exit 1; }
+
+# Anchor: the newest logs pane this session shows, else the simulator pane,
+# else the session's own pane. Keeps the order Claude | phone | logs...
+anchor=""
+for f in $(ls -t "$dir" 2>/dev/null); do
+  p=$(cat "$dir/$f"); if pane_exists "$p"; then anchor=$p; break; fi
+done
+if [ -z "$anchor" ]; then
+  p=$(sed -n 1p "$state_root/herdr-sim-pane/$HC_TERMINAL_ID" 2>/dev/null)
+  pane_exists "$p" && anchor=$p
+fi
+if [ -z "$anchor" ]; then
+  anchor=$(herdr-app ls | jq -r --arg t "$HC_TERMINAL_ID" \
+    'first(.. | objects | select(.terminal? == $t) | .pane) // empty')
+fi
+[ -n "$anchor" ] || { echo "herdr-logs: this session has no Herdr pane; read with: hc read $name" >&2; exit 0; }
+
+was_focused=$(herdr-app status | jq -r '.focused_pane // empty')
+out=$(herdr-app do pane.split "$(jq -nc --arg p "$anchor" --arg n "$name" \
+  '{direction:"right", pane:$p, argv:["hc","attach",$n]}')") || { echo "herdr-logs: $out" >&2; exit 1; }
+viewer=$(printf '%s' "$out" | jq -r '.pane // empty')
+# A split takes keyboard focus; give it back.
+pane_exists "$was_focused" && herdr-app do pane.focus "{\"pane\":\"$was_focused\"}" >/dev/null
+printf '%s\n' "$viewer" > "$state"
+echo "herdr-logs: $name shown ($viewer)."

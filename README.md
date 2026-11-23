@@ -8,6 +8,8 @@ Personal configuration files managed with [GNU Stow](https://www.gnu.org/softwar
 - **tmux** — tmux configuration (`~/.tmux.conf`) + Tmux Plugin Manager
 - **zsh** — Shell customizations (`~/.config/zsh/`) — aliases, env vars, functions
 - **git** — Git configuration (`~/.config/git/config`)
+- **herdr** — Herdr settings and keybindings (`~/.config/herdr-app/settings.json`, `keys.json`). macOS only; part of `all`.
+- **herdr-mobile** — opt-in, for mobile development only; never part of `all`. Adds Herdr's simulator pane, the agents and simulators sidebar and its layout (`~/.config/herdr-app/mods/herdr-sim`, `herdr-sim-screen`, `agents-sims`, `layouts/main-sims.json`), and the scripts agents use in `~/.local/bin`: `sim-dibs` (which session drives which iOS simulator or Android emulator; boots Android through avdslim), `herdr-sim-pane`, `herdr-expo`, `herdr-supabase` and the log panes. Builds [avdslim](https://github.com/kdbhalala/avdslim) from source at a pinned tag and installs simslim. The default slim profiles for both platforms are in `~/.config/sim-dibs` (`simslim.json`, `avdslim.json`; the reasons are in its README). A repo's own profile at its git root wins.
 
 ## Installation
 
@@ -25,7 +27,14 @@ cd ~/.config/dotfiles
 ./setup.sh tmux
 ./setup.sh zsh
 ./setup.sh git
+./setup.sh herdr          # Herdr settings + keybindings (web or mobile)
+./setup.sh herdr-mobile   # personal mobile machine only: simulator mods and scripts
 ```
+
+Open Herdr once before `./setup.sh herdr`, so it creates `~/.config/herdr-app` and installs its stock mods.
+Only our own files are linked: Herdr's runtime state and stock mods stay out of this repo.
+Settings files are swapped for symlinks with a single rename, because Herdr recreates them the moment they disappear.
+Mods are linked as whole folders, because Herdr refuses a mod whose imported files are symlinks pointing outside it.
 
 ### In dev-in-docker (Benchling)
 

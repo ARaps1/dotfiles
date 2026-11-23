@@ -1,0 +1,11 @@
+{
+  "name": "mobile-dev",
+  "ram": 2048,
+  "enable": [
+    "camera"
+  ],
+  "keep": [],
+  "skip": [
+    "bglimit"
+  ]
+}
